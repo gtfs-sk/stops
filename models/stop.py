@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import override
 
-from sqlalchemy import JSON, Float, ForeignKey, String
+from sqlalchemy import JSON, CheckConstraint, Float, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from models.amenity import Amenity
@@ -15,18 +15,40 @@ from models.transport_mode import TransportMode
 class BaseStop(Base):
     __tablename__: str = "stops"
 
+    __table_args__: tuple[CheckConstraint] = (
+        CheckConstraint(
+            """
+            country <> 'SK' OR (
+                NULLIF(TRIM(region), '') IS NOT NULL
+                AND NULLIF(TRIM(district), '') IS NOT NULL
+                AND NULLIF(TRIM(municipality), '') IS NOT NULL
+            )
+            """,
+            name="sk_administrative_areas_required",
+        ),
+    )
+
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     lat: Mapped[float] = mapped_column(Float, nullable=False)
     lon: Mapped[float] = mapped_column(Float, nullable=False)
 
+    country: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
+    region: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    district: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    municipality: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+
     stop_type: Mapped[StopType] = mapped_column(default=StopType.PLATFORM)
     modes: Mapped[list[TransportMode]] = mapped_column(JSON, default=list)
     amenities: Mapped[list[Amenity]] = mapped_column(JSON, default=list)
 
+    is_station: Mapped[bool] = mapped_column(
+        default=False,
+        nullable=False,
+    )
+
     source: Mapped[str] = mapped_column(String, nullable=False)
     original_id: Mapped[str] = mapped_column(String, nullable=False)
-    normalized_name: Mapped[str] = mapped_column(String, index=True)
 
     __mapper_args__: Mapping[str, object] = {
         "polymorphic_on": "stop_type",

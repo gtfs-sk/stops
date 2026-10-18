@@ -8,4 +8,8 @@ class TransportMode(StrEnum):
     TRAM = "tram"
     TROLLEYBUS = "trolleybus"
     SUBWAY = "subway"
+    LIGHT_RAIL = "light_rail"
+    MONORAIL = "monorail"
+    FUNICULAR = "funicular"
     CABLE_CAR = "cable_car"
+    FERRY = "ferry"

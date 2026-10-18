@@ -32,9 +32,9 @@ class StopClusterCleaner(BaseCleaner):
 
         by_name: dict[str, list[Stop]] = defaultdict(list)
         for stop in stops:
-            by_name[stop.normalized_name].append(stop)
+            by_name[stop.name].append(stop)
 
-        for _, group in by_name.items():
+        for group in by_name.values():
             if len(group) < 2:
                 continue
 
@@ -62,9 +62,13 @@ class StopClusterCleaner(BaseCleaner):
                         for platform in platforms:
                             platform.parent = master
 
-                        for mode in other.modes:
-                            if mode not in master.modes:
-                                master.modes.append(mode)
+                        master.is_station = master.is_station or other.is_station
+                        master.modes = list(
+                            dict.fromkeys([*master.modes, *other.modes])
+                        )
+                        master.amenities = list(
+                            dict.fromkeys([*master.amenities, *other.amenities])
+                        )
 
                         session.delete(other)
                         merged.add(other.id)

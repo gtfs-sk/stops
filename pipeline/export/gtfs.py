@@ -23,30 +23,42 @@ class GtfsStopsExporter(BaseCsvExporter):
         "wheelchair_boarding",
     ]
 
-    def is_wheelchair_accessible(self, item: Stop | Platform) -> int:
+    def wheelchair_boarding(self, item: Stop | Platform) -> int:
         return 1 if Amenity.WHEELCHAIR in item.amenities else 0
 
     @override
     def format_rows(self, stop: Stop) -> Iterator[Sequence[object]]:
-        yield [
-            stop.id,
-            stop.name,
-            stop.lat,
-            stop.lon,
-            stop.stop_type.value,
-            "",
-            "",
-            self.is_wheelchair_accessible(stop),
-        ]
-
-        for p in stop.platforms:
+        if stop.is_station:
             yield [
-                p.id,
-                p.name,
-                p.lat,
-                p.lon,
-                p.stop_type.value,
-                p.parent_station_id,
-                p.platform_code or "",
-                self.is_wheelchair_accessible(p),
+                stop.id,
+                stop.name,
+                stop.lat,
+                stop.lon,
+                1,
+                "",
+                "",
+                self.wheelchair_boarding(stop),
+            ]
+        elif not stop.platforms:
+            yield [
+                stop.id,
+                stop.name,
+                stop.lat,
+                stop.lon,
+                0,
+                "",
+                "",
+                self.wheelchair_boarding(stop),
+            ]
+
+        for platform in sorted(stop.platforms, key=lambda item: item.id):
+            yield [
+                platform.id,
+                platform.name,
+                platform.lat,
+                platform.lon,
+                0,
+                stop.id if stop.is_station else "",
+                platform.platform_code or "",
+                self.wheelchair_boarding(platform),
             ]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 from pathlib import Path
 
 from sqlalchemy import create_engine
@@ -23,6 +25,8 @@ CRAWLERS = [OsmCrawler]
 CLEANERS = [StopClusterCleaner]
 PATCHERS = []
 EXPORTERS = [GtfsStopsExporter, GeoJsonExporter, CsvExporter]
+
+logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO").upper())
 
 
 def build() -> None:
