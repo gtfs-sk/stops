@@ -6,6 +6,7 @@ from typing import override
 from sqlalchemy import JSON, Float, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from models.amenity import Amenity
 from models.base import Base
 from models.stop_type import StopType
 from models.transport_mode import TransportMode
@@ -21,6 +22,7 @@ class BaseStop(Base):
 
     stop_type: Mapped[StopType] = mapped_column(default=StopType.PLATFORM)
     modes: Mapped[list[TransportMode]] = mapped_column(JSON, default=list)
+    amenities: Mapped[list[Amenity]] = mapped_column(JSON, default=list)
 
     source: Mapped[str] = mapped_column(String, nullable=False)
     original_id: Mapped[str] = mapped_column(String, nullable=False)
@@ -68,6 +70,7 @@ class Platform(BaseStop):
             parent_val = kwargs["parent"]
             if isinstance(parent_val, Stop):
                 kwargs["name"] = parent_val.name
+
         super().__init__(**kwargs)
 
     @override
