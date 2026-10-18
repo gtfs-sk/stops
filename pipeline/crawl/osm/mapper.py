@@ -10,6 +10,7 @@ from tqdm.auto import tqdm
 
 from models import Platform, Stop, StopKind, TransportMode
 from models.amenity import Amenity
+from pipeline.clean import distance_meters
 
 from .admin import AdministrativeArea, AdministrativeLocator
 from .reader import OsmFeature, is_platform, is_station, is_stop_position
@@ -178,7 +179,6 @@ def make_stop(
     kind = stop_kind(feature.tags) if area_id is None else StopKind.STOP
     kwargs = common_kwargs(feature, name, area)
     kwargs["original_id"] = area_id or feature.original_id
-
     return Stop(
         id=f"osm-s-{area_id.replace('/', '-') if area_id else feature.id_suffix}",
         kind=kind,
@@ -243,10 +243,15 @@ def map_features(
         if unique_area is not None and unique_area in area_parents:
             parent = area_parents[unique_area]
             stations_by_id[feature.original_id] = parent
+
             parent.modes = list(dict.fromkeys([*parent.modes, *modes(feature.tags)]))
             parent.amenities = list(
                 dict.fromkeys([*parent.amenities, *amenities(feature.tags)])
             )
+
+            stations.append((feature, parent))
+            grid[cell(feature)].append((feature, parent))
+
             continue
 
         stop = make_stop(feature, name, area_of(feature))
@@ -255,6 +260,7 @@ def map_features(
         grid[cell(feature)].append((feature, stop))
         if unique_area is not None:
             area_parents[unique_area] = stop
+
         yield stop
 
     def nearby(feature: OsmFeature) -> Iterator[tuple[OsmFeature, Stop]]:
@@ -300,8 +306,10 @@ def map_features(
             or is_station(feature.tags)
         ):
             continue
+
         if not (name := name_of(feature)):
             continue
+
         row, col = cell(feature)
         has_platform = any(
             area_id in platform_area_ids for area_id in feature.stop_area_ids
@@ -321,15 +329,17 @@ def map_features(
             platform_grid[cell(feature)].append((feature, name))
             platform_area_ids.update(feature.stop_area_ids)
 
-    parents_with_platforms: set[str] = set()
+    platforms_by_parent: dict[str, list[Platform]] = defaultdict(list)
     for feature, name in tqdm(platforms, desc="Mapping platforms", unit="platform"):
         unique_area = (
             feature.stop_area_ids[0] if len(feature.stop_area_ids) == 1 else None
         )
         if unique_area is not None and unique_area in area_parents:
             parent = area_parents[unique_area]
-            parents_with_platforms.add(parent.id)
-            yield make_platform(feature, parent, area_of(feature))
+            platform = make_platform(feature, parent, area_of(feature))
+            platforms_by_parent[parent.id].append(platform)
+            yield platform
+
             continue
 
         if unique_area is not None:
@@ -341,8 +351,11 @@ def map_features(
             )
             area_parents[unique_area] = parent
             yield parent
-            parents_with_platforms.add(parent.id)
-            yield make_platform(feature, parent, area_of(feature))
+
+            platform = make_platform(feature, parent, area_of(feature))
+            platforms_by_parent[parent.id].append(platform)
+            yield platform
+
             continue
 
         candidates = [
@@ -360,21 +373,34 @@ def map_features(
             parent = make_stop(feature, name, area_of(feature))
             yield parent
 
-        parents_with_platforms.add(parent.id)
-        yield make_platform(feature, parent, area_of(feature))
+        platform = make_platform(feature, parent, area_of(feature))
+        platforms_by_parent[parent.id].append(platform)
+        yield platform
 
-    created_fallbacks: dict[str, list[OsmFeature]] = defaultdict(list)
-    for feature, stop in tqdm(stations, desc="Station fallbacks", unit="stop"):
-        if stop.id in parents_with_platforms:
+    for feature, stop in tqdm(stations, desc="Station fallbacks", unit="station"):
+        nearby_platforms = [
+            platform
+            for platform in platforms_by_parent[stop.id]
+            if distance_meters((feature.lat, feature.lon), (platform.lat, platform.lon))
+            <= POSITION_SEARCH_METERS
+        ]
+        station_modes = modes(feature.tags)
+        present_modes = {
+            mode for platform in nearby_platforms for mode in platform.modes
+        }
+        missing_modes = [mode for mode in station_modes if mode not in present_modes]
+
+        if station_modes:
+            if not missing_modes:
+                continue
+        elif nearby_platforms:
             continue
 
-        if any(
-            distance(feature, other) <= 150 for other in created_fallbacks[stop.name]
-        ):
-            continue
-
-        created_fallbacks[stop.name].append(feature)
-        yield make_platform(feature, stop, area_of(feature), fallback=True)
+        fallback = make_platform(feature, stop, area_of(feature), fallback=True)
+        if station_modes:
+            fallback.modes = missing_modes
+        platforms_by_parent[stop.id].append(fallback)
+        yield fallback
 
     if unnamed:
         logger.warning("Skipped %d platforms without resolvable names", unnamed)

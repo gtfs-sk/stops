@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import logging
-import math
 from collections import defaultdict
 from typing import final, override
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from tqdm.auto import tqdm
 
-from models import Stop, StopKind
+from models import Platform, Stop, StopKind
 from pipeline.clean import BaseCleaner, distance_meters
 
 logger = logging.getLogger(__name__)
@@ -37,7 +36,10 @@ class StopClusterCleaner(BaseCleaner):
 
     @override
     def clean(self, session: Session) -> None:
-        stops = session.scalars(select(Stop)).all()
+        original_platform_ids = set(session.scalars(select(Platform.id)))
+        stops = session.scalars(
+            select(Stop).options(selectinload(Stop.platforms))
+        ).all()
 
         by_name: dict[tuple[str, str | None, str], list[Stop]] = defaultdict(list)
         for stop in stops:
@@ -49,6 +51,7 @@ class StopClusterCleaner(BaseCleaner):
             by_name[key].append(stop)
 
         merged_count = 0
+        moved_platform_count = 0
         for group in tqdm(by_name.values(), desc="Clustering stops", unit="group"):
             if len(group) <= 1:
                 continue
@@ -80,6 +83,7 @@ class StopClusterCleaner(BaseCleaner):
                     )
                     for platform in list(other.platforms):
                         platform.parent = master
+                        moved_platform_count += 1
                     session.delete(other)
                     merged_count += 1
 
