@@ -22,7 +22,9 @@ class GeoJsonExporter(BaseExporter):
             features.append(
                 {
                     "type": "Feature",
-                    "geometry": {"type": "Point", "coordinates": [item.lon, item.lat]},
+                    "geometry": {"type": "Point", "coordinates": [item.lon, item.lat]}
+                    if item.lon and item.lat
+                    else None,
                     "properties": {
                         "id": item.id,
                         "name": item.name,

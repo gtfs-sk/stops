@@ -103,7 +103,7 @@ def modes(tags: dict[str, str]) -> list[TransportMode]:
             result.append(TransportMode.REGIONAL_BUS)
         for ref in refs:
             if re.fullmatch(r"[A-Za-z]+[0-9]+|[0-9]{1,2}", ref):
-                result.append(TransportMode.MHD)
+                result.append(TransportMode.LOCAL_BUS)
             else:
                 result.append(TransportMode.REGIONAL_BUS)
 

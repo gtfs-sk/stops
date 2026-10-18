@@ -2,7 +2,7 @@ from enum import StrEnum
 
 
 class TransportMode(StrEnum):
-    MHD = "mhd"
+    LOCAL_BUS = "local_bus"
     REGIONAL_BUS = "regional_bus"
     TRAIN = "train"
     TRAM = "tram"

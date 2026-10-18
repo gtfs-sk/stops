@@ -45,20 +45,17 @@ def _position(stop: Stop) -> tuple[float, float]:
 @final
 class StopClusterCleaner(BaseCleaner):
     name = "stop_cluster"
-    max_distance_meters = 250.0
+    max_distance_meters = 500.0
 
     @override
     def clean(self, session: Session) -> None:
         stops = session.scalars(select(Stop)).all()
 
-        by_name: dict[tuple[str, str | None, str | None, str], list[Stop]] = (
-            defaultdict(list)
-        )
+        by_name: dict[tuple[str, str | None, str], list[Stop]] = defaultdict(list)
         for stop in stops:
             key = (
                 stop.country,
-                stop.district,
-                stop.municipality,
+                stop.region,
                 stop.name.casefold().strip(),
             )
             by_name[key].append(stop)
