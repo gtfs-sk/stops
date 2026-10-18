@@ -18,15 +18,11 @@ class GeoJsonExporter(BaseExporter):
     @override
     def export(self, stops: Sequence[Stop], destination: Path) -> None:
         features: list[dict[str, object]] = []
-
         for item, kind in iter_locations(stops):
             features.append(
                 {
                     "type": "Feature",
-                    "geometry": {
-                        "type": "Point",
-                        "coordinates": [item.lon, item.lat],
-                    },
+                    "geometry": {"type": "Point", "coordinates": [item.lon, item.lat]},
                     "properties": {
                         "id": item.id,
                         "name": item.name,
@@ -35,24 +31,19 @@ class GeoJsonExporter(BaseExporter):
                         "region": item.region,
                         "district": item.district,
                         "municipality": item.municipality,
-                        "platform_code": (
-                            item.platform_code if isinstance(item, Platform) else None
-                        ),
-                        "parent_station_id": (
-                            item.parent_station_id
-                            if isinstance(item, Platform)
-                            else None
-                        ),
-                        "modes": [str(m) for m in item.modes],
-                        "amenities": [str(a) for a in item.amenities],
+                        "platform_code": item.platform_code
+                        if isinstance(item, Platform)
+                        else None,
+                        "stop_id": item.stop_id if isinstance(item, Platform) else None,
+                        "modes": [str(mode) for mode in item.modes or []],
+                        "amenities": [str(amenity) for amenity in item.amenities or []],
                     },
                 }
             )
 
         _ = destination.write_text(
             json.dumps(
-                {"type": "FeatureCollection", "features": features},
-                ensure_ascii=False,
+                {"type": "FeatureCollection", "features": features}, ensure_ascii=False
             ),
             encoding="utf-8",
         )

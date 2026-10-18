@@ -20,6 +20,7 @@ class OsmFeature:
     lat: float
     lon: float
     stop_area_name: str | None = None
+    stop_area_ids: tuple[str, ...] = ()
 
     @property
     def id_suffix(self) -> str:
@@ -50,7 +51,7 @@ def is_stop_position(tags: TagList | dict[str, str]) -> bool:
 
 
 def _representative_point(coords: list[tuple[float, float]]) -> tuple[float, float]:
-    """Accept (longitude, latitude), return (latitude, longitude)."""
+    """Coordinates arrive as (longitude, latitude); return (latitude, longitude)."""
     if len(coords) == 1:
         return coords[0][1], coords[0][0]
     if len(coords) >= 4 and coords[0] == coords[-1]:
@@ -58,18 +59,17 @@ def _representative_point(coords: list[tuple[float, float]]) -> tuple[float, flo
         if polygon.is_valid and not polygon.is_empty and polygon.area > 0:
             point = polygon.representative_point()
             return point.y, point.x
-    line = LineString(coords)
-    point = line.interpolate(0.5, normalized=True)
+    point = LineString(coords).interpolate(0.5, normalized=True)
     return point.y, point.x
 
 
 @final
-class _StopHandler(osmium.SimpleHandler):
+class StopHandler(osmium.SimpleHandler):
     def __init__(self, progress: tqdm[NoReturn]) -> None:
         super().__init__()
         self.features: dict[str, OsmFeature] = {}
-        self.area_names: dict[str, str] = {}
         self.station_relations: list[tuple[str, dict[str, str], list[str]]] = []
+        self.stop_areas: list[tuple[str, str | None, list[str]]] = []
         self.progress = progress
         self.processed = 0
 
@@ -81,12 +81,16 @@ class _StopHandler(osmium.SimpleHandler):
 
     def node(self, obj: Node) -> None:
         self._tick()
-        if not (
-            is_station(obj.tags) or is_platform(obj.tags) or is_stop_position(obj.tags)
+        if (
+            not (
+                is_station(obj.tags)
+                or is_platform(obj.tags)
+                or is_stop_position(obj.tags)
+            )
+            or not obj.location.valid()
         ):
             return
-        if not obj.location.valid():
-            return
+
         key = f"node/{obj.id}"
         self.features[key] = OsmFeature(
             key, dict(obj.tags), obj.location.lat, obj.location.lon
@@ -98,11 +102,16 @@ class _StopHandler(osmium.SimpleHandler):
             is_station(obj.tags) or is_platform(obj.tags) or is_stop_position(obj.tags)
         ):
             return
+
         coords = [
-            (n.location.lon, n.location.lat) for n in obj.nodes if n.location.valid()
+            (node.location.lon, node.location.lat)
+            for node in obj.nodes
+            if node.location.valid()
         ]
+
         if not coords:
             return
+
         lat, lon = _representative_point(coords)
         key = f"way/{obj.id}"
         self.features[key] = OsmFeature(key, dict(obj.tags), lat, lon)
@@ -113,14 +122,19 @@ class _StopHandler(osmium.SimpleHandler):
         is_station_relation = is_station(obj.tags)
         if not is_area and not is_station_relation:
             return
+
+        member_types = {"n": "node", "w": "way", "r": "relation"}
         members = [
-            f"{'node' if m.type == 'n' else 'way'}/{m.ref}"
-            for m in obj.members
-            if m.type in {"n", "w"}
+            f"{member_types[member.type]}/{member.ref}"
+            for member in obj.members
+            if member.type in member_types
         ]
-        if is_area and (name := obj.tags.get("name")):
-            for member in members:
-                _ = self.area_names.setdefault(member, name)
+
+        if is_area:
+            self.stop_areas.append(
+                (f"relation/{obj.id}", obj.tags.get("name"), members)
+            )
+
         if is_station_relation:
             self.station_relations.append(
                 (f"relation/{obj.id}", dict(obj.tags), members)
@@ -131,29 +145,44 @@ def read_pbf(path: Path) -> list[OsmFeature]:
     with tqdm(
         desc="Reading OSM", unit="obj", unit_scale=True, dynamic_ncols=True
     ) as progress:
-        handler = _StopHandler(progress)
+        handler = StopHandler(progress)
         handler.apply_file(str(path), locations=True)
         _ = progress.update(handler.processed % 50_000)
-
-    for original_id, name in handler.area_names.items():
-        if feature := handler.features.get(original_id):
-            feature.stop_area_name = name
 
     for original_id, tags, member_ids in tqdm(
         handler.station_relations,
         desc="Resolving station relations",
         unit="relation",
-        dynamic_ncols=True,
     ):
         members = [handler.features[m] for m in member_ids if m in handler.features]
+
         if not members:
             continue
+
         handler.features[original_id] = OsmFeature(
             original_id,
             tags,
-            sum(m.lat for m in members) / len(members),
-            sum(m.lon for m in members) / len(members),
+            sum(member.lat for member in members) / len(members),
+            sum(member.lon for member in members) / len(members),
         )
 
-    logger.info("Read %s OSM stop features", len(handler.features))
+    memberships: dict[str, set[str]] = {}
+    for area_id, area_name, member_ids in handler.stop_areas:
+        for member_id in member_ids:
+            feature = handler.features.get(member_id)
+            if feature is None:
+                continue
+            memberships.setdefault(member_id, set()).add(area_id)
+            if area_name and not feature.stop_area_name:
+                feature.stop_area_name = area_name
+
+    for feature_id, area_ids in memberships.items():
+        handler.features[feature_id].stop_area_ids = tuple(sorted(area_ids))
+
+    logger.info(
+        "Read %d OSM stop features, %d stop_area relations",
+        len(handler.features),
+        len(handler.stop_areas),
+    )
+
     return list(handler.features.values())

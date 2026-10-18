@@ -3,13 +3,12 @@ from __future__ import annotations
 import logging
 import math
 import re
-import unicodedata
 from collections import defaultdict
 from collections.abc import Iterator
 
 from tqdm.auto import tqdm
 
-from models import Platform, Stop, TransportMode
+from models import Platform, Stop, StopKind, TransportMode
 from models.amenity import Amenity
 
 from .admin import AdministrativeArea, AdministrativeLocator
@@ -17,7 +16,7 @@ from .reader import OsmFeature, is_platform, is_station, is_stop_position
 
 logger = logging.getLogger(__name__)
 
-CELL_SIZE = 0.01  # degrees; adjacent cells cover a 300 m search radius in Slovakia
+CELL_SIZE = 0.01
 STATION_SEARCH_METERS = 300
 PLATFORM_SEARCH_METERS = 250
 POSITION_SEARCH_METERS = 60
@@ -55,81 +54,72 @@ def bus_candidate(tags: dict[str, str]) -> bool:
 
 
 def modes(tags: dict[str, str]) -> list[TransportMode]:
-    modes: list[TransportMode] = []
+    result: list[TransportMode] = []
 
     railway = tags.get("railway")
     station = tags.get("station")
-
-    special_stations = {
-        "subway",
-        "light_rail",
-        "monorail",
-        "funicular",
-        "tram",
-    }
+    special = {"subway", "light_rail", "monorail", "funicular", "tram"}
 
     if tags.get("train") == "yes" or (
         railway in {"station", "halt"}
         and tags.get("train") != "no"
-        and station not in special_stations
+        and station not in special
         and tags.get("subway") != "yes"
         and tags.get("tram") != "yes"
     ):
-        modes.append(TransportMode.TRAIN)
+        result.append(TransportMode.TRAIN)
 
     if railway == "tram_stop" or tags.get("tram") == "yes" or station == "tram":
-        modes.append(TransportMode.TRAM)
+        result.append(TransportMode.TRAM)
 
     if tags.get("subway") == "yes" or station == "subway":
-        modes.append(TransportMode.SUBWAY)
+        result.append(TransportMode.SUBWAY)
 
     if tags.get("light_rail") == "yes" or station == "light_rail":
-        modes.append(TransportMode.LIGHT_RAIL)
+        result.append(TransportMode.LIGHT_RAIL)
 
     if tags.get("monorail") == "yes" or station == "monorail":
-        modes.append(TransportMode.MONORAIL)
+        result.append(TransportMode.MONORAIL)
 
     if tags.get("funicular") == "yes" or station == "funicular":
-        modes.append(TransportMode.FUNICULAR)
+        result.append(TransportMode.FUNICULAR)
 
     if tags.get("trolleybus") == "yes":
-        modes.append(TransportMode.TROLLEYBUS)
+        result.append(TransportMode.TROLLEYBUS)
 
-    if tags.get("aerialway") == "station" or tags.get("aerialway") == "yes":
-        modes.append(TransportMode.CABLE_CAR)
+    if tags.get("aerialway") in {"station", "yes"}:
+        result.append(TransportMode.CABLE_CAR)
 
     if (
         tags.get("amenity") == "ferry_terminal"
         or tags.get("ferry") == "yes"
         or tags.get("route") == "ferry"
     ):
-        modes.append(TransportMode.FERRY)
+        result.append(TransportMode.FERRY)
 
     if bus_candidate(tags) and tags.get("bus") != "no":
         refs = route_refs(tags)
-
         if not refs:
-            modes.append(TransportMode.REGIONAL_BUS)
-
+            result.append(TransportMode.REGIONAL_BUS)
         for ref in refs:
             if re.fullmatch(r"[A-Za-z]+[0-9]+|[0-9]{1,2}", ref):
-                modes.append(TransportMode.MHD)
+                result.append(TransportMode.MHD)
             else:
-                modes.append(TransportMode.REGIONAL_BUS)
+                result.append(TransportMode.REGIONAL_BUS)
 
-    return list(dict.fromkeys(modes))
+    return list(dict.fromkeys(result))
 
 
-def _amenities(tags: dict[str, str]) -> list[Amenity]:
+def amenities(tags: dict[str, str]) -> list[Amenity]:
     result: list[Amenity] = []
 
-    for tag, amenity in (
+    for key, amenity in (
         ("bench", Amenity.BENCH),
         ("bin", Amenity.BIN),
         ("lit", Amenity.LIGHTING),
         ("tactile_paving", Amenity.TACTILE_PAVING),
     ):
-        if tags.get(tag) == "yes":
+        if tags.get(key) == "yes":
             result.append(amenity)
 
     if tags.get("shelter") == "yes" or tags.get("covered") == "yes":
@@ -150,29 +140,51 @@ def _amenities(tags: dict[str, str]) -> list[Amenity]:
     return result
 
 
-def _common_kwargs(
+def stop_kind(tags: dict[str, str]) -> StopKind:
+    if (
+        tags.get("railway") == "station"
+        or tags.get("public_transport") == "station"
+        or tags.get("amenity") in {"bus_station", "ferry_terminal"}
+        or tags.get("aerialway") == "station"
+    ):
+        return StopKind.STATION
+
+    return StopKind.STOP
+
+
+def common_kwargs(
     feature: OsmFeature, name: str, area: AdministrativeArea
 ) -> dict[str, object]:
     return {
         "name": name,
-        "lat": feature.lat,
-        "lon": feature.lon,
         "country": area.country,
         "region": area.region,
         "district": area.district,
         "municipality": area.municipality,
         "modes": modes(feature.tags),
-        "amenities": _amenities(feature.tags),
+        "amenities": amenities(feature.tags),
         "source": "osm",
         "original_id": feature.original_id,
     }
 
 
-def make_stop(feature: OsmFeature, name: str, area: AdministrativeArea) -> Stop:
+def make_stop(
+    feature: OsmFeature,
+    name: str,
+    area: AdministrativeArea,
+    *,
+    area_id: str | None = None,
+) -> Stop:
+    kind = stop_kind(feature.tags) if area_id is None else StopKind.STOP
+    kwargs = common_kwargs(feature, name, area)
+    kwargs["original_id"] = area_id or feature.original_id
+
     return Stop(
-        id=f"osm-s-{feature.id_suffix}",
-        is_station=is_station(feature.tags),
-        **_common_kwargs(feature, name, area),
+        id=f"osm-s-{area_id.replace('/', '-') if area_id else feature.id_suffix}",
+        kind=kind,
+        lat=feature.lat if kind == StopKind.STATION else None,
+        lon=feature.lon if kind == StopKind.STATION else None,
+        **kwargs,
     )
 
 
@@ -183,14 +195,15 @@ def make_platform(
     *,
     fallback: bool = False,
 ) -> Platform:
-    values = _common_kwargs(feature, parent.name, area)
     return Platform(
         id=f"osm-p-{'fallback-' if fallback else ''}{feature.id_suffix}",
         parent=parent,
         platform_code=(feature.tags.get("local_ref") or feature.tags.get("ref"))
         if not fallback
         else None,
-        **values,
+        lat=feature.lat,
+        lon=feature.lon,
+        **common_kwargs(feature, parent.name, area),
     )
 
 
@@ -208,44 +221,56 @@ def map_features(
 
     stations: list[tuple[OsmFeature, Stop]] = []
     stations_by_id: dict[str, Stop] = {}
+    area_parents: dict[str, Stop] = {}
     grid: dict[tuple[int, int], list[tuple[OsmFeature, Stop]]] = defaultdict(list)
-    for feature in tqdm(features, desc="Mapping stations", unit="feature"):
-        if not is_station(feature.tags):
-            continue
 
+    station_features = [feature for feature in features if is_station(feature.tags)]
+    station_features.sort(
+        key=lambda feature: (
+            stop_kind(feature.tags) != StopKind.STATION,
+            feature.original_id,
+        )
+    )
+    for feature in tqdm(station_features, desc="Mapping stops", unit="feature"):
         name = feature.tags.get("name") or feature.stop_area_name
         if not name:
+            continue
+
+        unique_area = (
+            feature.stop_area_ids[0] if len(feature.stop_area_ids) == 1 else None
+        )
+
+        if unique_area is not None and unique_area in area_parents:
+            parent = area_parents[unique_area]
+            stations_by_id[feature.original_id] = parent
+            parent.modes = list(dict.fromkeys([*parent.modes, *modes(feature.tags)]))
+            parent.amenities = list(
+                dict.fromkeys([*parent.amenities, *amenities(feature.tags)])
+            )
             continue
 
         stop = make_stop(feature, name, area_of(feature))
         stations.append((feature, stop))
         stations_by_id[feature.original_id] = stop
         grid[cell(feature)].append((feature, stop))
-
+        if unique_area is not None:
+            area_parents[unique_area] = stop
         yield stop
 
     def nearby(feature: OsmFeature) -> Iterator[tuple[OsmFeature, Stop]]:
         row, col = cell(feature)
         for dr in (-1, 0, 1):
             for dc in (-1, 0, 1):
-                yield from grid.get((row + dr, col + dc), [])
+                yield from grid.get((row + dr, col + dc), ())
 
     def name_of(feature: OsmFeature) -> str | None:
         name = feature.tags.get("name") or feature.stop_area_name
         if name:
             return name
-
-        candidates: list[tuple[float, str]] = [
-            (distance(feature, neighbor), stop.name)
-            for neighbor, stop in nearby(feature)
+        candidates = [
+            (distance(feature, other), stop.name) for other, stop in nearby(feature)
         ]
-
-        close = [
-            (distance, name)
-            for distance, name in candidates
-            if distance <= PLATFORM_SEARCH_METERS
-        ]
-
+        close = [(d, n) for d, n in candidates if d <= PLATFORM_SEARCH_METERS]
         return min(close, default=(float("inf"), None))[1]
 
     platforms: list[tuple[OsmFeature, str]] = []
@@ -253,7 +278,6 @@ def map_features(
         list
     )
     unnamed = 0
-
     for feature in tqdm(features, desc="Finding platforms", unit="feature"):
         if not is_platform(feature.tags):
             continue
@@ -263,8 +287,12 @@ def map_features(
         else:
             unnamed += 1
 
-    # stop_position represents the vehicle stopping location, use it only
-    # when no mapped passenger platform with the same name is nearby.
+    platform_area_ids = {
+        area_id
+        for platform_feature, _ in platforms
+        for area_id in platform_feature.stop_area_ids
+    }
+
     for feature in tqdm(features, desc="Stop-position fallbacks", unit="feature"):
         if (
             not is_stop_position(feature.tags)
@@ -272,28 +300,56 @@ def map_features(
             or is_station(feature.tags)
         ):
             continue
-
         if not (name := name_of(feature)):
             continue
-
         row, col = cell(feature)
         has_platform = any(
-            other_name == name and distance(feature, other) <= POSITION_SEARCH_METERS
-            for dr in (-1, 0, 1)
-            for dc in (-1, 0, 1)
-            for other, other_name in platform_grid.get((row + dr, col + dc), ())
+            area_id in platform_area_ids for area_id in feature.stop_area_ids
         )
+
+        if not has_platform:
+            has_platform = any(
+                other_name == name
+                and distance(feature, other) <= POSITION_SEARCH_METERS
+                for dr in (-1, 0, 1)
+                for dc in (-1, 0, 1)
+                for other, other_name in platform_grid.get((row + dr, col + dc), ())
+            )
 
         if not has_platform:
             platforms.append((feature, name))
             platform_grid[cell(feature)].append((feature, name))
+            platform_area_ids.update(feature.stop_area_ids)
 
+    parents_with_platforms: set[str] = set()
     for feature, name in tqdm(platforms, desc="Mapping platforms", unit="platform"):
+        unique_area = (
+            feature.stop_area_ids[0] if len(feature.stop_area_ids) == 1 else None
+        )
+        if unique_area is not None and unique_area in area_parents:
+            parent = area_parents[unique_area]
+            parents_with_platforms.add(parent.id)
+            yield make_platform(feature, parent, area_of(feature))
+            continue
+
+        if unique_area is not None:
+            parent = make_stop(
+                feature,
+                feature.stop_area_name or name,
+                area_of(feature),
+                area_id=unique_area,
+            )
+            area_parents[unique_area] = parent
+            yield parent
+            parents_with_platforms.add(parent.id)
+            yield make_platform(feature, parent, area_of(feature))
+            continue
+
         candidates = [
             (d, stop)
-            for neighbor, stop in nearby(feature)
+            for other, stop in nearby(feature)
             if stop.name == name
-            if (d := distance(feature, neighbor)) <= STATION_SEARCH_METERS
+            if (d := distance(feature, other)) <= STATION_SEARCH_METERS
         ]
 
         if candidates:
@@ -304,24 +360,16 @@ def map_features(
             parent = make_stop(feature, name, area_of(feature))
             yield parent
 
+        parents_with_platforms.add(parent.id)
         yield make_platform(feature, parent, area_of(feature))
 
-    # stations that have no mapped platform still need one fallback platform
     created_fallbacks: dict[str, list[OsmFeature]] = defaultdict(list)
-    for feature, stop in tqdm(stations, desc="Station fallbacks", unit="station"):
-        row, col = cell(feature)
-
-        if any(
-            name == stop.name and distance(feature, platform) <= PLATFORM_SEARCH_METERS
-            for dr in (-1, 0, 1)
-            for dc in (-1, 0, 1)
-            for platform, name in platform_grid.get((row + dr, col + dc), ())
-        ):  # already has a platform with the same name nearby
+    for feature, stop in tqdm(stations, desc="Station fallbacks", unit="stop"):
+        if stop.id in parents_with_platforms:
             continue
 
         if any(
-            distance(feature, previous) <= 150
-            for previous in created_fallbacks[stop.name]
+            distance(feature, other) <= 150 for other in created_fallbacks[stop.name]
         ):
             continue
 
@@ -329,4 +377,4 @@ def map_features(
         yield make_platform(feature, stop, area_of(feature), fallback=True)
 
     if unnamed:
-        logger.warning("Skipped %d platform features without resolvable names", unnamed)
+        logger.warning("Skipped %d platforms without resolvable names", unnamed)

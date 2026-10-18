@@ -23,7 +23,7 @@ class CsvExporter(BaseCsvExporter):
         "district",
         "municipality",
         "platform_code",
-        "parent_station_id",
+        "stop_id",
         "modes",
         "amenities",
     ]
@@ -41,8 +41,8 @@ class CsvExporter(BaseCsvExporter):
                 item.region or "",
                 item.district or "",
                 item.municipality or "",
-                item.platform_code or "" if isinstance(item, Platform) else "",
-                item.parent_station_id if isinstance(item, Platform) else "",
-                ";".join(str(m) for m in item.modes),
-                ";".join(str(a) for a in item.amenities),
+                (item.platform_code or "") if isinstance(item, Platform) else "",
+                item.stop_id if isinstance(item, Platform) else "",
+                ";".join(map(str, item.modes or [])),
+                ";".join(map(str, item.amenities or [])),
             ]
