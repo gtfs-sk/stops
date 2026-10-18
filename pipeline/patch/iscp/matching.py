@@ -87,9 +87,12 @@ def match_quality(
 class RegistryIndex:
     def __init__(self, records: list[IscpRecord]) -> None:
         self.by_municipality: dict[str, list[IscpRecord]] = defaultdict(list)
+        self.by_name: dict[str, list[IscpRecord]] = defaultdict(list)
         self.grid: dict[tuple[int, int], list[IscpRecord]] = defaultdict(list)
         for rec in records:
             self.by_municipality[rec.norm_municipality].append(rec)
+            for norm_name in rec.norm_names:
+                self.by_name[norm_name].append(rec)
             if rec.lat is not None and rec.lon is not None:
                 key = (
                     math.floor(rec.lat / GRID_CELL_DEG),
@@ -128,6 +131,26 @@ class RegistryIndex:
                         out.append(rec)
         return out
 
+    def exact_name_match(self, name_vars: set[str]) -> list[IscpRecord]:
+        """
+        Records matching the full normalized name.
+
+        Fallback for records geography can't reach (no GPS). Requires a
+        distinctive multi-word name unique in the registry.
+        """
+
+        cislos: dict[str, IscpRecord] = {}
+        for var in name_vars:
+            if len(var.split()) < 2:
+                continue
+            for rec in self.by_name.get(var, ()):
+                cislos.setdefault(rec.cislo, rec)
+
+        if len(cislos) == 1:
+            return list(cislos.values())
+
+        return []
+
 
 def match_stops(
     stops: list[Stop], index: RegistryIndex
@@ -157,6 +180,15 @@ def match_stops(
             continue
         assigned[stop_id] = (rec, quality)
         taken.add(rec.cislo)
+
+    # fallback: exact name match without geography
+    for stop in stops:
+        if stop.id in assigned:
+            continue
+        matches = index.exact_name_match(name_vars[stop.id])
+        if len(matches) == 1 and matches[0].cislo not in taken:
+            assigned[stop.id] = (matches[0], "high")
+            taken.add(matches[0].cislo)
 
     return assigned, with_candidates
 

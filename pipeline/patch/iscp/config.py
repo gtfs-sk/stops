@@ -8,7 +8,7 @@ UNMATCHED_CSV = Path("data/iscp_unmatched.csv")
 ENCODING = "windows-1250"
 
 WORKERS = 4
-RATE_LIMIT_SECONDS = 0.5  # min delay between requests, shared across threads
+RATE_LIMIT_SECONDS = 0.15  # min delay between requests, shared across threads
 MAX_RETRIES = 5
 USER_AGENT = "gtfs.sk iscp matcher"
 

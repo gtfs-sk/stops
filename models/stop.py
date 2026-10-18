@@ -23,6 +23,11 @@ class LocationFields:
     )
 
     name: Mapped[str] = mapped_column(String, nullable=False)
+    original_name: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+        comment="name before normalization by the stop_names patcher",
+    )
     country: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
     region: Mapped[str | None] = mapped_column(String, index=True)
     district: Mapped[str | None] = mapped_column(String, index=True)

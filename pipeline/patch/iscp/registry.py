@@ -6,7 +6,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from html.parser import HTMLParser
 from typing import final, override
@@ -26,19 +26,33 @@ from .config import (
     WORKERS,
 )
 from .models import IscpRecord
+from .text import normalize
 
 logger = logging.getLogger(__name__)
 
-# Column positions in the registry tables.
-COL_NUMBER = 1  # Cislo - the official stop ID
-COL_MUNICIPALITY = 2  # Obec/mesto
-COL_LOCAL_PART = 3  # Miestna cast
-COL_LOCALITY = 4  # Lokalita
-COL_NAME_MHD = 5  # Nazov MHD
-COL_NAME_IDS = 6  # Nazov IDS
-COL_TRANSPORT = 10  # Dopr.sys. ("Zrusena" marks cancelled stops)
-COL_GPS_X = 11  # GPS-X(E) = longitude
-COL_GPS_Y = 12  # GPS-Y(N) = latitude
+HEADER_ROLES = {
+    "cislo": "number",
+    "por c": None,
+    "obec mesto": "municipality",
+    "nazov 1": "municipality",
+    "miestna cast": "local_part",
+    "nazov 2": "local_part",
+    "lokalita": "locality",
+    "nazov 3": "locality",
+    "nazov mhd": "name_mhd",
+    "nazov ids": "name_ids",
+    "okres": None,
+    "stat": None,
+    "okres cr": None,
+    "dopr sys": "transport",
+    "gps x e": "gps_x",
+    "gps x": "gps_x",
+    "gps y n": "gps_y",
+    "gps y": "gps_y",
+    "suradnice gps": "gps_combined",
+    "platnost": None,
+    "na mape": None,
+}
 
 
 class TableParser(HTMLParser):
@@ -86,18 +100,18 @@ def first_float(text: str) -> float | None:
     return None
 
 
-def name_variants(cells: list[str]) -> list[str]:
-    municipality = cells[COL_MUNICIPALITY]
-    local_part = cells[COL_LOCAL_PART]
-    locality = cells[COL_LOCALITY]
+def build_name_variants(fields: dict[str, str]) -> list[str]:
+    municipality = fields.get("municipality", "")
+    local_part = fields.get("local_part", "")
+    locality = fields.get("locality", "")
 
     return [
         v
         for v in [
-            cells[COL_NAME_IDS],
+            fields.get("name_ids", ""),
             f"{municipality}, {locality}" if municipality and locality else "",
             f"{municipality}, {local_part}" if municipality and local_part else "",
-            cells[COL_NAME_MHD],
+            fields.get("name_mhd", ""),
             locality,
             local_part,
         ]
@@ -105,30 +119,85 @@ def name_variants(cells: list[str]) -> list[str]:
     ]
 
 
-def parse_registry_file(html_text: str) -> list[IscpRecord]:
+def build_display_name(fields: dict[str, str]) -> str:
+    if name_ids := fields.get("name_ids", ""):
+        return name_ids
+    if name_mhd := fields.get("name_mhd", ""):
+        return name_mhd
+    municipality = fields.get("municipality", "")
+    locality = fields.get("locality", "") or fields.get("local_part", "")
+    if municipality and locality:
+        return f"{municipality}, {locality}"
+    return municipality or locality
+
+
+def parse_combined_gps(text: str) -> tuple[float | None, float | None]:
+    lat = lon = None
+    for part in text.replace(",", " ").split():
+        try:
+            value = float(part)
+        except ValueError:
+            continue
+        if 47.0 <= value <= 50.0 and lat is None:
+            lat = value
+        elif 16.0 <= value <= 23.0 and lon is None:
+            lon = value
+    return lat, lon
+
+
+def parse_coords(fields: dict[str, str]) -> tuple[float | None, float | None]:
+    lon = first_float(fields.get("gps_x", ""))
+    lat = first_float(fields.get("gps_y", ""))
+    if lat is None or lon is None:
+        combined_lat, combined_lon = parse_combined_gps(fields.get("gps_combined", ""))
+        lat = lat if lat is not None else combined_lat
+        lon = lon if lon is not None else combined_lon
+    if lat is None or lon is None:
+        return None, None
+    return lat, lon
+
+
+def parse_registry_file(html_text: str, filename: str = "") -> list[IscpRecord]:
     parser = TableParser()
     parser.feed(html_text)
+    roles: list[str | None] | None = None
     records: list[IscpRecord] = []
     for row in parser.rows:
         cells = [clean_cell(c) for c in row]
-        if (
-            len(cells) < 15
-            or cells[COL_NUMBER] == "Číslo"
-            or not cells[COL_NUMBER].isdigit()
-        ):
+        if roles is None:
+            if any("íslo" in c for c in cells):
+                roles = [HEADER_ROLES.get(normalize(c)) for c in cells]
+                unknown = sorted(
+                    {c for c in cells if c.strip() and normalize(c) not in HEADER_ROLES}
+                )
+                if unknown:
+                    logger.debug("%s: unmapped columns: %s", filename, unknown)
+                if "number" not in roles:
+                    logger.warning(
+                        "%s: header without Cislo column, skipping", filename
+                    )
+                    return []
             continue
-
+        fields: dict[str, str] = {}
+        for role, cell in zip(roles, cells):
+            if role is not None:
+                fields[role] = cell
+        if not fields.get("number", "").isdigit():
+            continue
+        lat, lon = parse_coords(fields)
         rec = IscpRecord(
-            cislo=cells[COL_NUMBER],
-            municipality=cells[COL_MUNICIPALITY],
-            names=name_variants(cells),
-            lon=first_float(cells[COL_GPS_X]),
-            lat=first_float(cells[COL_GPS_Y]),
-            cancelled="Zrušen" in cells[COL_TRANSPORT],
+            cislo=fields["number"],
+            municipality=fields.get("municipality", ""),
+            names=build_name_variants(fields),
+            lat=lat,
+            lon=lon,
+            cancelled="Zrušen" in fields.get("transport", ""),
+            display_name=build_display_name(fields),
         )
-
         rec.reindex()
         records.append(rec)
+    if roles is None:
+        logger.warning("%s: no header row found", filename)
     return records
 
 
@@ -186,7 +255,9 @@ def http_get(url: str, limiter: RateLimiter) -> requests.Response:
 def download_file(filename: str, limiter: RateLimiter) -> list[IscpRecord]:
     try:
         resp = http_get(BASE_URL + filename, limiter)
-        return parse_registry_file(resp.content.decode(ENCODING, errors="replace"))
+        return parse_registry_file(
+            resp.content.decode(ENCODING, errors="replace"), filename
+        )
     except Exception as exc:
         logger.error("Giving up on %s: %s", filename, exc)
         return []
@@ -233,7 +304,7 @@ def load_registry() -> tuple[list[IscpRecord], str]:
 
     records = download_registry()
     payload = {
-        "downloaded_at": datetime.now(timezone.utc).isoformat(),
+        "downloaded_at": datetime.now(UTC).isoformat(),
         "records": [r.to_json() for r in records],
     }
 

@@ -16,6 +16,7 @@ class IscpRecord:
     lat: float | None = None
     lon: float | None = None
     cancelled: bool = False
+    display_name: str = ""
     norm_names: set[str] = field(default_factory=set)
     norm_municipality: str = ""
 
@@ -31,6 +32,7 @@ class IscpRecord:
             "lat": self.lat,
             "lon": self.lon,
             "cancelled": self.cancelled,
+            "display_name": self.display_name,
         }
 
     @classmethod
@@ -42,6 +44,7 @@ class IscpRecord:
             lat=data["lat"],
             lon=data["lon"],
             cancelled=data["cancelled"],
+            display_name=data["display_name"],
         )
         rec.reindex()
         return rec
