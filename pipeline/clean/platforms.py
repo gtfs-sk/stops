@@ -39,7 +39,7 @@ def quality(platform: Platform) -> tuple[int, int, int, int, int, int]:
     then the amount of available information. OSM ways win only ties.
     """
 
-    mode_names = {str(mode) for mode in platform.modes}
+    mode_names = set(platform.modes)
     specific_modes = mode_names - BUS_MODES
     return (
         int(not platform.id.startswith("osm-p-fallback-")),
