@@ -18,13 +18,14 @@ from pipeline.export.commacsv import CsvExporter
 from pipeline.export.geojson import GeoJsonExporter
 from pipeline.export.gtfs import GtfsStopsExporter
 from pipeline.patch import run_patchers
+from pipeline.patch.iscp import IscpIdPatcher
 
 DB_PATH = Path("stops.sqlite")
 OUTPUT_DIR = Path("data")
 
 CRAWLERS = [OsmCrawler]
 CLEANERS = [StopClusterCleaner, PlatformDeduplicationCleaner]
-PATCHERS = []
+PATCHERS = [IscpIdPatcher]
 EXPORTERS = [GtfsStopsExporter, GeoJsonExporter, CsvExporter]
 
 logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO").upper())

@@ -15,6 +15,13 @@ class LocationFields:
     """Shared columns, without joined or single-table inheritance."""
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    iscp_id: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+        index=True,
+        comment="stop id from the iscp.sk registry",
+    )
+
     name: Mapped[str] = mapped_column(String, nullable=False)
     country: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
     region: Mapped[str | None] = mapped_column(String, index=True)

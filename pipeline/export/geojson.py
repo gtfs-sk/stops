@@ -27,6 +27,7 @@ class GeoJsonExporter(BaseExporter):
                     else None,
                     "properties": {
                         "id": item.id,
+                        "iscp_id": item.iscp_id,
                         "name": item.name,
                         "type": kind,
                         "country": item.country,

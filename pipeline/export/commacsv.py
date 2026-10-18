@@ -14,6 +14,7 @@ class CsvExporter(BaseCsvExporter):
     filename = "stops.csv"
     headers: Sequence[str] = [
         "id",
+        "iscp_id",
         "name",
         "type",
         "lat",
@@ -33,6 +34,7 @@ class CsvExporter(BaseCsvExporter):
         for item, kind in iter_locations([stop]):
             yield [
                 item.id,
+                item.iscp_id,
                 item.name,
                 kind,
                 item.lat,
