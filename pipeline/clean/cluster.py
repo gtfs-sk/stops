@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 from tqdm.auto import tqdm
 
 from models import Platform, Stop, StopKind
+from models.transport_group import TransportGroup, transport_group
 from pipeline.clean import BaseCleaner, distance_meters
 
 logger = logging.getLogger(__name__)
@@ -36,22 +37,28 @@ class StopClusterCleaner(BaseCleaner):
 
     @override
     def clean(self, session: Session) -> None:
-        original_platform_ids = set(session.scalars(select(Platform.id)))
+        before_platform_ids = set(session.scalars(select(Platform.id)))
         stops = session.scalars(
             select(Stop).options(selectinload(Stop.platforms))
         ).all()
 
-        by_name: dict[tuple[str, str | None, str], list[Stop]] = defaultdict(list)
+        by_name: dict[tuple[str, str | None, str, str], list[Stop]] = defaultdict(list)
         for stop in stops:
+            group = transport_group(stop.modes)
             key = (
                 stop.country,
                 stop.region,
                 stop.name.casefold().strip(),
+                group.value,
             )
+
+            if group == TransportGroup.MIXED:
+                logger.warning("Skipping mixed-mode stop %s: %s", stop.id, stop.modes)
+                continue
+
             by_name[key].append(stop)
 
         merged_count = 0
-        moved_platform_count = 0
         for group in tqdm(by_name.values(), desc="Clustering stops", unit="group"):
             if len(group) <= 1:
                 continue
@@ -83,8 +90,21 @@ class StopClusterCleaner(BaseCleaner):
                     )
                     for platform in list(other.platforms):
                         platform.parent = master
-                        moved_platform_count += 1
                     session.delete(other)
                     merged_count += 1
 
-        logger.info("Merged %d logical stops", merged_count)
+        session.flush()
+        after_platform_ids = set(session.scalars(select(Platform.id)))
+        if before_platform_ids != after_platform_ids:
+            lost = sorted(before_platform_ids - after_platform_ids)
+            extra = sorted(after_platform_ids - before_platform_ids)
+            raise RuntimeError(
+                f"Stop clustering changed platform identities: "
+                f"lost={lost[:15]!r}, added={extra[:15]!r}"
+            )
+
+        logger.info(
+            "Merged %d logical stops; preserved %d platforms",
+            merged_count,
+            len(before_platform_ids),
+        )
