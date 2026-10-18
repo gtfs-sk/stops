@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from models import Base
 from pipeline.clean import run_cleaners
 from pipeline.clean.cluster import StopClusterCleaner
+from pipeline.clean.platforms import PlatformDeduplicationCleaner
 from pipeline.crawl import run_crawlers
 from pipeline.crawl.osm import OsmCrawler
 from pipeline.export import run_exporters
@@ -22,7 +23,7 @@ DB_PATH = Path("stops.sqlite")
 OUTPUT_DIR = Path("data")
 
 CRAWLERS = [OsmCrawler]
-CLEANERS = [StopClusterCleaner]
+CLEANERS = [StopClusterCleaner, PlatformDeduplicationCleaner]
 PATCHERS = []
 EXPORTERS = [GtfsStopsExporter, GeoJsonExporter, CsvExporter]
 
