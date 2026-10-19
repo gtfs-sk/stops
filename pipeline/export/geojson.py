@@ -34,12 +34,14 @@ class GeoJsonExporter(BaseExporter):
                         "region": item.region,
                         "district": item.district,
                         "municipality": item.municipality,
+                        "modes": [str(mode) for mode in item.modes or []],
+                        "amenities": [str(amenity) for amenity in item.amenities or []],
                         "platform_code": item.platform_code
                         if isinstance(item, Platform)
                         else None,
-                        "stop_id": item.stop_id if isinstance(item, Platform) else None,
-                        "modes": [str(mode) for mode in item.modes or []],
-                        "amenities": [str(amenity) for amenity in item.amenities or []],
+                        "parent_stop_id": item.stop_id
+                        if isinstance(item, Platform)
+                        else None,
                     },
                 }
             )

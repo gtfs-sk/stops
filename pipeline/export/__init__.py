@@ -4,7 +4,7 @@ import csv
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import override
+from typing import TextIO, override
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -23,6 +23,14 @@ class BaseExporter(ABC):
     ) -> None:
         pass
 
+    def export_from_session(
+        self,
+        session: Session,
+        stops: Sequence[Stop],
+        destination: Path,
+    ) -> None:
+        self.export(stops, destination)
+
 
 class BaseCsvExporter(BaseExporter, ABC):
     headers: Sequence[str]
@@ -31,14 +39,17 @@ class BaseCsvExporter(BaseExporter, ABC):
     def format_rows(self, stop: Stop) -> Iterator[Sequence[object]]:
         pass
 
+    def write_csv(self, stops: Sequence[Stop], stream: TextIO) -> None:
+        writer = csv.writer(stream)
+        writer.writerow(self.headers)
+        for stop in stops:
+            for row in self.format_rows(stop):
+                writer.writerow(row)
+
     @override
     def export(self, stops: Sequence[Stop], destination: Path) -> None:
-        with destination.open("w", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(self.headers)
-            for stop in stops:
-                for row in self.format_rows(stop):
-                    writer.writerow(row)
+        with destination.open("w", encoding="utf-8", newline="") as stream:
+            self.write_csv(stops, stream)
 
 
 def run_exporters(
@@ -57,4 +68,4 @@ def run_exporters(
     for exporter_cls in exporters:
         exporter = exporter_cls()
         destination = output_dir / exporter.filename
-        exporter.export(stops, destination)
+        exporter.export_from_session(session, stops, destination)

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
+from io import TextIOWrapper
+from pathlib import Path
 from typing import final, override
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from models import Platform, Stop, StopKind
 from models.amenity import Amenity
@@ -11,7 +14,7 @@ from pipeline.export import BaseCsvExporter
 
 @final
 class GtfsStopsExporter(BaseCsvExporter):
-    filename = "stops.txt"
+    filename = "stops.gtfs.zip"
     headers: Sequence[str] = [
         "stop_id",
         "stop_name",
@@ -22,6 +25,15 @@ class GtfsStopsExporter(BaseCsvExporter):
         "platform_code",
         "wheelchair_boarding",
     ]
+
+    @override
+    def export(self, stops: Sequence[Stop], destination: Path) -> None:
+        with (
+            ZipFile(destination, "w", compression=ZIP_DEFLATED) as archive,
+            archive.open("stops.txt", "w") as binary_stream,
+            TextIOWrapper(binary_stream, encoding="utf-8", newline="") as stream,
+        ):
+            self.write_csv(stops, stream)
 
     @staticmethod
     def wheelchair_boarding(item: Stop | Platform) -> int:
