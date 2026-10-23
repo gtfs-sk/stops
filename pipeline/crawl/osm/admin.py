@@ -98,7 +98,8 @@ def name_column(kind: str, fields: list[str]) -> str:
     if column not in fields:
         raise ValueError(
             f"GKÚ {kind}: expected name column {column!r}, available: {fields}. "
-            f"Override with GKU_{kind.upper()}_NAME_COLUMN if the source schema changed."
+            f"Override with GKU_{kind.upper()}_NAME_COLUMN "
+            "if the source schema changed."
         )
 
     return column
@@ -109,7 +110,10 @@ class PolygonLayer:
         self.kind = kind
         with fiona.open(path, layer=layer) as source:
             self.crs = CRS.from_user_input(source.crs_wkt or source.crs)
-            column = name_column(kind, list(source.schema["properties"]))
+            schema = source.schema
+            if schema is None:
+                raise ValueError(f"GKÚ {kind}: no schema in {path.name}:{layer}")
+            column = name_column(kind, list(schema["properties"]))
             geometries = []
             names = []
             for item in tqdm(
@@ -243,7 +247,7 @@ class CountryIndex:
         point = Point(lon, lat)
         geod = Geod(ellps="WGS84")
         candidates: dict[str, float] = {}
-        for polygon, code in zip(self.geometries, self.codes):
+        for polygon, code in zip(self.geometries, self.codes, strict=True):
             # The nearest point in WGS84 degrees is used only to select a
             # boundary position; distance is measured geodesically in metres.
             nearest = nearest_points(point, polygon)[1]

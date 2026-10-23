@@ -1,0 +1,131 @@
+name: Release
+
+# Rebuilds the dataset from its live sources (OpenStreetMap, the ISCP
+# registry, GKÚ ZBGIS boundaries) and publishes it as a GitHub Release.
+#
+# Versioning is CalVer -- the version is the snapshot date of the data,
+# not a code version: vYYYY.MM.DD (Europe/Bratislava). A manual re-run on
+# a day that already has a release gets a numeric suffix (v2026.10.22.2).
+
+on:
+  schedule:
+    # Monthly, on the 1st at 03:00 UTC (04:00/05:00 in Bratislava).
+    - cron: "0 3 1 * *"
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: "Publish as a prerelease (use for the first test run)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/check.yml
+
+  release:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build dataset
+        env:
+          OSM_REFRESH: "1"
+        run: python build.py
+
+      - name: Validate exports (no release if this fails)
+        run: |
+          python scripts/validate_exports.py data/export --min-stops 1000 \
+            | tee release-stats.txt
+          cat release-stats.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Compute CalVer tag
+        id: version
+        run: |
+          BASE="v$(TZ=Europe/Bratislava date +%Y.%m.%d)"
+          TAG="$BASE"
+          SUFFIX=1
+          while gh release view "$TAG" > /dev/null 2>&1; do
+            SUFFIX=$((SUFFIX + 1))
+            TAG="${BASE}.${SUFFIX}"
+          done
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG"
+
+      - name: Bundle release assets
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          mkdir release-assets
+          cp data/export/* release-assets/
+          (cd data/export && zip -r "$GITHUB_WORKSPACE/release-assets/stops-$TAG.zip" .)
+          (cd release-assets && sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS")
+          mv "$RUNNER_TEMP/SHA256SUMS" release-assets/SHA256SUMS
+          ls -lh release-assets
+
+      - name: Write release notes
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          STOPS=$(grep '^stops:' release-stats.txt | cut -d' ' -f2)
+          PLATFORMS=$(grep '^platforms:' release-stats.txt | cut -d' ' -f2)
+          ISCP=$(grep '^iscp_coverage_pct:' release-stats.txt | cut -d' ' -f2)
+          {
+            echo "Snapshot of Slovakia's public-transport stops as of $TAG (CalVer)."
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Stops | $STOPS |"
+            echo "| Platforms | $PLATFORMS |"
+            echo "| Stops with an ISCP id | $ISCP % |"
+            echo "| Built from | [\`${GITHUB_SHA:0:7}\`](https://github.com/${{ github.repository }}/commit/$GITHUB_SHA) |"
+            echo
+            echo "Assets: the nine export files described in"
+            echo "[docs/exports.md](https://github.com/${{ github.repository }}/blob/main/docs/exports.md),"
+            echo "a combined \`stops-$TAG.zip\` bundle and \`SHA256SUMS\`."
+            echo
+            echo "Data: ODbL 1.0 (see LICENSE). Sources: © OpenStreetMap"
+            echo "contributors (ODbL), ISCP registry (iscp.sk), GKÚ ZBGIS"
+            echo "administrative boundaries."
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          ARGS=(--title "$TAG" --notes-file release-notes.md)
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            ARGS+=(--prerelease)
+          fi
+          gh release create "$TAG" "${ARGS[@]}" release-assets/*
+
+      - name: Keep exports for debugging if anything above failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-release-exports
+          path: data/export/
+          retention-days: 7
+          if-no-files-found: ignore

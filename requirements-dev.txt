@@ -1,0 +1,4 @@
+# Development/check tools, pinned to the versions CI was verified with.
+# Runtime dependencies live in requirements.txt.
+pyright==1.1.414
+ruff==0.17.2

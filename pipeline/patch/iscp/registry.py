@@ -179,7 +179,7 @@ def parse_registry_file(html_text: str, filename: str = "") -> list[IscpRecord]:
                     return []
             continue
         fields: dict[str, str] = {}
-        for role, cell in zip(roles, cells):
+        for role, cell in zip(roles, cells, strict=False):
             if role is not None:
                 fields[role] = cell
         if not fields.get("number", "").isdigit():

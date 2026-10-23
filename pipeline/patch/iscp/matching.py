@@ -47,9 +47,12 @@ def stop_name_variants(stop: Stop) -> set[str]:
     municipality = normalize(stop.municipality)
     full = normalize(stop.name)
 
-    if municipality and full.startswith(municipality):
-        if rest := full[len(municipality) :].strip(" ,"):
-            out.add(rest)
+    if (
+        municipality
+        and full.startswith(municipality)
+        and (rest := full[len(municipality) :].strip(" ,"))
+    ):
+        out.add(rest)
 
     return {v for v in out if v}
 
