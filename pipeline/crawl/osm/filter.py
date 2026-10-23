@@ -47,7 +47,8 @@ def ensure_filtered_pbf(path: Path) -> Path:
 
     if shutil.which("osmium") is None:
         raise RuntimeError(
-            "Missing osmium-tool; on macOS run: brew install osmium-tool"
+            "Missing osmium-tool; on macOS run: brew install osmium-tool; "
+            "on Debian/Ubuntu run: sudo apt-get install osmium-tool"
         )
 
     logger.info("Filtering OSM: %s", path)

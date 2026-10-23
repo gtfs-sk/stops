@@ -68,15 +68,15 @@ schema. The name of the foreign-key field depends on the export format:
 
 | Context | Stop identifier | Platform identifier | Parent-stop reference |
 | --- | --- | --- | --- |
-| Curated CSV | `id` | `id` | `platform_parent_id` |
+| Curated CSV | `id` | `id` | `platform_parent_stop_id` |
 | Full CSV | Model's `id` | Model's `id` | Typically `stop_id` (the mapped model column) |
 | SQLite | `stops.id` | `platforms.id` | `platforms.stop_id` |
 | GTFS `stops.txt` | `stop_id` | `stop_id` | `parent_station`, where applicable |
 
 > [!NOTE]
-> `platform_parent_id` references the project's **internal `id` of the stop**;
+> `platform_parent_stop_id` references the project's **internal `id` of the stop**;
 > it is **not** an ISCP ID. `parent_station` is the standard GTFS field name
-> and is not a replacement for `platform_parent_id` in the CSV schema.
+> and is not a replacement for `platform_parent_stop_id` in the CSV schema.
 
 The three curated CSV files are different **views of the same records**, not
 three independent datasets. The same applies to the three full CSV variants.
@@ -100,7 +100,7 @@ id,iscp_id,name,type,lat,lon,country,region,district,municipality,modes,amenitie
 **`platforms.csv` and `stops-and-platforms.csv` — 14 columns:**
 
 ```csv
-id,iscp_id,name,type,lat,lon,country,region,district,municipality,modes,amenities,platform_code,platform_parent_id
+id,iscp_id,name,type,lat,lon,country,region,district,municipality,modes,amenities,platform_code,platform_parent_stop_id
 ```
 
 ### Column reference
@@ -120,7 +120,7 @@ id,iscp_id,name,type,lat,lon,country,region,district,municipality,modes,amenitie
 | `modes` | Serialized multi-value field | Available transport modes, using the existing curated CSV serialization. | Stop modes | Platform modes |
 | `amenities` | Serialized multi-value field | Amenities/accessibility attributes, using the existing curated CSV serialization. | Stop amenities | Platform amenities |
 | `platform_code` | Text, optional | Platform number/code as represented by the source data. | Not included in `stops.csv`; empty for stop rows in the combined file | Where known |
-| `platform_parent_id` | Identifier (text), optional | ID of the stop to which the platform belongs; references a row in `stops.csv`. | Not included in `stops.csv`; empty for stop rows in the combined file | Parent stop ID |
+| `platform_parent_stop_id` | Identifier (text), optional | ID of the stop to which the platform belongs; references a row in `stops.csv`. | Not included in `stops.csv`; empty for stop rows in the combined file | Parent stop ID |
 
 The `modes` and `amenities` fields can contain multiple values. Their
 representation is inherited from the existing `CsvExporter` implementation;
@@ -136,8 +136,8 @@ is not proof that a location has no amenities).
 | File | Included rows | Excluded rows | Key relationship |
 | --- | --- | --- | --- |
 | `stops.csv` | One row per stop | All platform records | `id` is the stop ID; no platform-only columns |
-| `platforms.csv` | One row per platform | All stop records | `platform_parent_id` → `stops.csv.id` |
-| `stops-and-platforms.csv` | Every stop **and** its platforms | Nothing from those two record types | `type` distinguishes rows; platform rows contain `platform_parent_id` |
+| `platforms.csv` | One row per platform | All stop records | `platform_parent_stop_id` → `stops.csv.id` |
+| `stops-and-platforms.csv` | Every stop **and** its platforms | Nothing from those two record types | `type` distinguishes rows; platform rows contain `platform_parent_stop_id` |
 
 A stop without platforms still appears in `stops.csv` and
 `stops-and-platforms.csv`; it does not create an artificial platform row.
@@ -152,7 +152,7 @@ with open("data/export/stops.csv", encoding="utf-8", newline="") as f:
 
 with open("data/export/platforms.csv", encoding="utf-8", newline="") as f:
     for platform in csv.DictReader(f):
-        stop = stops.get(platform["platform_parent_id"])
+        stop = stops.get(platform["platform_parent_stop_id"])
         print(platform["name"], "→", stop["name"] if stop else "unknown stop")
 ```
 
@@ -193,7 +193,7 @@ The authoritative column list is the currently installed model schema.
 | `source` | Where mapped | Source system associated with the record. |
 | `original_id` | Where mapped | Identifier from the source system; not necessarily the same as `iscp_id`. |
 | `kind` | Stop model, where mapped | Stop/station classification in the database model. |
-| `stop_id` | Platform model, where mapped | Foreign key referencing the parent stop. This is the database-oriented counterpart of the curated `platform_parent_id`. |
+| `stop_id` | Platform model, where mapped | Foreign key referencing the parent stop. This is the database-oriented counterpart of the curated `platform_parent_stop_id`. |
 | `platform_code` | Platform model, where mapped | Platform number/code. |
 | `lat`, `lon` | Where mapped | Geographic coordinates. |
 | `modes`, `amenities` | Where mapped | Model-level multi-value attributes. |
@@ -445,7 +445,7 @@ flowchart TD
 | `stops.full.csv` containing both record types | `stops-and-platforms.full.csv` |
 | — | `stops.csv` now contains **stops only**, without platform-only fields |
 | — | `stops.full.csv` now contains **stops only** |
-| `parent_stop_id` in curated CSV | `platform_parent_id` |
+| `parent_stop_id` in curated CSV | `platform_parent_stop_id` |
 
 In the current layout, `stops.*` means **stops only** for the two CSV families;
 `stops-and-platforms.*` means **both record types**. The names
