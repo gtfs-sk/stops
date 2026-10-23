@@ -20,12 +20,12 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from build import EXPORTERS
-from models import Base
-from pipeline.export import run_exporters
-
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+
+from build import EXPORTERS  # noqa: E402
+from models import Base  # noqa: E402
+from pipeline.export import run_exporters  # noqa: E402
 
 
 def main() -> int:
