@@ -92,7 +92,9 @@ function parseGeoJSON(data) {
       district: String(p.district || ''),
       municipality: String(p.municipality || ''),
       code: String(p.platform_code ?? ''),
-      parentId: String(p.stop_id ?? p.parent_station_id ?? ''),
+      parentId: String(
+        p.platform_parent_stop_id ?? p.parent_stop_id ?? p.stop_id ?? p.parent_station_id ?? ''
+      ),
       modes: modeArray(p.modes),
       amenities: modeArray(p.amenities),
       source: p.source ? String(p.source) : '',

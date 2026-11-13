@@ -1,16 +1,8 @@
 from pathlib import Path
 
-INDEX_URL = "http://www.iscp.sk/pages/glob_z/work/OBCE_SKK.HTM"
-BASE_URL = "http://www.iscp.sk/pages/glob_z/work/"
-CACHE_PATH = Path("data/cache/iscp_registry.json")
-CACHE_TTL_DAYS = 30
+# Registry acquisition lives in pipeline/crawl/iscp; this config only
+# covers the matching step.
 UNMATCHED_CSV = Path("data/iscp_unmatched.csv")
-ENCODING = "windows-1250"
-
-WORKERS = 4
-RATE_LIMIT_SECONDS = 0.15  # min delay between requests, shared across threads
-MAX_RETRIES = 5
-USER_AGENT = "gtfs.sk iscp matcher"
 
 EXACT_MAX_M = 500.0  # normalized name equal, <= this apart -> "exact"
 HIGH_MAX_M = 2000.0  # normalized name equal, <= this apart -> "high"

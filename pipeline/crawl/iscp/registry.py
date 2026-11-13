@@ -14,9 +14,12 @@ from typing import final, override
 import requests
 from tqdm.auto import tqdm
 
+from pipeline.text import normalize
+
 from .config import (
     BASE_URL,
     CACHE_PATH,
+    CACHE_SCHEMA_VERSION,
     CACHE_TTL_DAYS,
     ENCODING,
     INDEX_URL,
@@ -25,8 +28,7 @@ from .config import (
     USER_AGENT,
     WORKERS,
 )
-from .models import IscpRecord
-from .text import normalize
+from .models import IscpRegistryRecord
 
 logger = logging.getLogger(__name__)
 
@@ -41,16 +43,16 @@ HEADER_ROLES = {
     "nazov 3": "locality",
     "nazov mhd": "name_mhd",
     "nazov ids": "name_ids",
-    "okres": None,
-    "stat": None,
-    "okres cr": None,
+    "okres": "district",
+    "stat": "country",
+    "okres cr": "district",
     "dopr sys": "transport",
     "gps x e": "gps_x",
     "gps x": "gps_x",
     "gps y n": "gps_y",
     "gps y": "gps_y",
     "suradnice gps": "gps_combined",
-    "platnost": None,
+    "platnost": "validity",
     "na mape": None,
 }
 
@@ -91,13 +93,14 @@ def clean_cell(text: str) -> str:
     return text.replace("\xa0", "").strip()
 
 
-def first_float(text: str) -> float | None:
-    for part in text.split():
+def parse_floats(text: str) -> list[float]:
+    values = []
+    for part in text.replace(",", " ").split():
         try:
-            return float(part)
+            values.append(float(part))
         except ValueError:
-            pass
-    return None
+            continue
+    return values
 
 
 def build_name_variants(fields: dict[str, str]) -> list[str]:
@@ -131,37 +134,37 @@ def build_display_name(fields: dict[str, str]) -> str:
     return municipality or locality
 
 
-def parse_combined_gps(text: str) -> tuple[float | None, float | None]:
-    lat = lon = None
-    for part in text.replace(",", " ").split():
-        try:
-            value = float(part)
-        except ValueError:
-            continue
-        if 47.0 <= value <= 50.0 and lat is None:
-            lat = value
-        elif 16.0 <= value <= 23.0 and lon is None:
-            lon = value
-    return lat, lon
+def parse_coordinates(fields: dict[str, str]) -> list[tuple[float, float]]:
+    """Parse every GPS coordinate pair of a registry record.
+
+    The source stores parallel space-separated lists (GPS-X is longitude,
+    GPS-Y is latitude) or, in some layouts, one combined cell whose
+    values alternate latitude/longitude.
+    """
+
+    lons = parse_floats(fields.get("gps_x", ""))
+    lats = parse_floats(fields.get("gps_y", ""))
+    if lats or lons:
+        return list(zip(lats, lons, strict=False))
+
+    values = parse_floats(fields.get("gps_combined", ""))
+    pairs: list[tuple[float, float]] = []
+    index = 0
+    while index + 1 < len(values):
+        lat, lon = values[index], values[index + 1]
+        if 47.0 <= lat <= 50.0 and 16.0 <= lon <= 23.0:
+            pairs.append((lat, lon))
+            index += 2
+        else:
+            index += 1
+    return pairs
 
 
-def parse_coords(fields: dict[str, str]) -> tuple[float | None, float | None]:
-    lon = first_float(fields.get("gps_x", ""))
-    lat = first_float(fields.get("gps_y", ""))
-    if lat is None or lon is None:
-        combined_lat, combined_lon = parse_combined_gps(fields.get("gps_combined", ""))
-        lat = lat if lat is not None else combined_lat
-        lon = lon if lon is not None else combined_lon
-    if lat is None or lon is None:
-        return None, None
-    return lat, lon
-
-
-def parse_registry_file(html_text: str, filename: str = "") -> list[IscpRecord]:
+def parse_registry_file(html_text: str, filename: str = "") -> list[IscpRegistryRecord]:
     parser = TableParser()
     parser.feed(html_text)
     roles: list[str | None] | None = None
-    records: list[IscpRecord] = []
+    records: list[IscpRegistryRecord] = []
     for row in parser.rows:
         cells = [clean_cell(c) for c in row]
         if roles is None:
@@ -184,15 +187,23 @@ def parse_registry_file(html_text: str, filename: str = "") -> list[IscpRecord]:
                 fields[role] = cell
         if not fields.get("number", "").isdigit():
             continue
-        lat, lon = parse_coords(fields)
-        rec = IscpRecord(
-            cislo=fields["number"],
+        rec = IscpRegistryRecord(
+            iscp_id=fields["number"],
             municipality=fields.get("municipality", ""),
-            names=build_name_variants(fields),
-            lat=lat,
-            lon=lon,
-            cancelled="Zrušen" in fields.get("transport", ""),
+            local_part=fields.get("local_part", ""),
+            locality=fields.get("locality", ""),
+            name_ids=fields.get("name_ids", ""),
+            name_mhd=fields.get("name_mhd", ""),
             display_name=build_display_name(fields),
+            district=fields.get("district", ""),
+            country=fields.get("country", ""),
+            transport_system=fields.get("transport", ""),
+            validity=fields.get("validity", ""),
+            is_cancelled="Zrušen" in fields.get("transport", ""),
+            source_file=filename,
+            coordinates=parse_coordinates(fields),
+            raw_fields=dict(fields),
+            names=build_name_variants(fields),
         )
         rec.reindex()
         records.append(rec)
@@ -252,7 +263,7 @@ def http_get(url: str, limiter: RateLimiter) -> requests.Response:
     raise RuntimeError(f"GET {url} failed after {MAX_RETRIES} attempts: {last_exc}")
 
 
-def download_file(filename: str, limiter: RateLimiter) -> list[IscpRecord]:
+def download_file(filename: str, limiter: RateLimiter) -> list[IscpRegistryRecord]:
     try:
         resp = http_get(BASE_URL + filename, limiter)
         return parse_registry_file(
@@ -263,7 +274,7 @@ def download_file(filename: str, limiter: RateLimiter) -> list[IscpRecord]:
         return []
 
 
-def download_registry() -> list[IscpRecord]:
+def download_registry() -> list[IscpRegistryRecord]:
     limiter = RateLimiter(RATE_LIMIT_SECONDS)
     index_html = http_get(INDEX_URL, limiter).text
     files = sorted(
@@ -276,7 +287,7 @@ def download_registry() -> list[IscpRecord]:
     )
 
     logger.info("ISCP index lists %d municipality files", len(files))
-    records: list[IscpRecord] = []
+    records: list[IscpRegistryRecord] = []
     download = partial(download_file, limiter=limiter)
 
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
@@ -291,19 +302,31 @@ def download_registry() -> list[IscpRecord]:
     return records
 
 
-def load_registry() -> tuple[list[IscpRecord], str]:
+def load_registry() -> tuple[list[IscpRegistryRecord], str]:
+    """Load the registry from the local cache or download it.
+
+    The cache stores the crawler's rich record shape (schema version 2);
+    older caches are ignored because they dropped source fields and all
+    but the first GPS coordinate pair.
+    """
+
     if CACHE_PATH.exists():
         mtime = datetime.fromtimestamp(CACHE_PATH.stat().st_mtime, tz=UTC)
         if datetime.now(UTC) - mtime < timedelta(days=CACHE_TTL_DAYS):
             try:
                 payload = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
-                records = [IscpRecord.from_json(item) for item in payload["records"]]
+                if payload.get("schema_version") != CACHE_SCHEMA_VERSION:
+                    raise ValueError("outdated ISCP cache schema")
+                records = [
+                    IscpRegistryRecord.from_json(item) for item in payload["records"]
+                ]
                 return records, f"cache from {payload['downloaded_at']}"
-            except (json.JSONDecodeError, KeyError) as exc:
-                logger.warning("Corrupt ISCP cache, re-downloading: %s", exc)
+            except (json.JSONDecodeError, KeyError, ValueError) as exc:
+                logger.warning("Unusable ISCP cache, re-downloading: %s", exc)
 
     records = download_registry()
     payload = {
+        "schema_version": CACHE_SCHEMA_VERSION,
         "downloaded_at": datetime.now(UTC).isoformat(),
         "records": [r.to_json() for r in records],
     }

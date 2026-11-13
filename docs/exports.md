@@ -11,8 +11,9 @@ python build.py
 ```
 
 > [!IMPORTANT]
-> These files contain the **processed dataset**, not an unchanged copy of the ISCP
-> source. A separate raw/normalized ISCP publication is not part of these exports.
+> The main exports contain the **processed dataset**, not an unchanged copy of
+> the ISCP source. The registry itself is published separately, as
+> `iscp-register.zip` (see [ISCP register](#iscp-register-iscp-registerzip)).
 
 ## Available files
 
@@ -23,26 +24,26 @@ data/
     ├── stops.csv                        # Stops only, curated columns
     ├── platforms.csv                    # Platforms only, curated columns
     ├── stops-and-platforms.csv          # Both, curated columns
-    ├── stops.full.csv                   # Stops only, all mapped columns
-    ├── platforms.full.csv               # Platforms only, all mapped columns
-    ├── stops-and-platforms.full.csv     # Both, all mapped columns
     ├── stops.geojson                    # Geographic features
     ├── stops.gtfs.zip                   # ZIP containing stops.txt
-    └── stops.sqlite                     # Complete SQLite snapshot
+    ├── stops.sqlite                     # Dedicated SQLite export
+    └── iscp-register.zip                # Standalone ISCP registry (CSV/GeoJSON/SQLite)
 ```
 
 | Format | File(s) | Contents | Recommended use |
 | --- | --- | --- | --- |
 | Curated CSV | `stops.csv`, `platforms.csv`, `stops-and-platforms.csv` | Stable, human-oriented schemas: **12 columns for stops**, **14 for platforms and combined** | Spreadsheets, analysis, integrations |
-| Full CSV | `stops.full.csv`, `platforms.full.csv`, `stops-and-platforms.full.csv` | Every mapped column of the stop and/or platform models | Detailed analysis, auditing and data migration |
 | GeoJSON | `stops.geojson` | Geographic features representing stops and platforms | GIS software, maps |
 | GTFS | `stops.gtfs.zip` | A GTFS `stops.txt` table | GTFS-related tools and integrations |
-| SQLite | `stops.sqlite` | A snapshot of the **entire working database** | SQL queries and complete relational data access |
+| SQLite | `stops.sqlite` | A dedicated export database with an explicit schema: canonical stops/platforms, the ISCP registry tables and the match links | SQL queries and complete relational data access |
+| ISCP register | `iscp-register.zip` | The ISCP registry on its own: `iscp-stops.csv`, `iscp-platforms.csv`, `iscp-stops.geojson`, `iscp.sqlite` | Working with the official registry without the processed dataset |
 
 **Which file should I choose?** Use `stops.csv` when you want a list of stops,
 `platforms.csv` when you want boarding locations, or `stops-and-platforms.csv`
-when you want both as one table. Choose a `*.full.csv` variant for original
-model columns. Choose SQLite if you need **all database tables and relationships**.
+when you want both as one table. Choose SQLite if you need **all database
+tables and relationships** (it also carries the provenance columns
+`original_name`, `source` and `source_id`). Choose `iscp-register.zip` when
+you want the ISCP registry itself, without the processed dataset.
 
 ## Data model and identifiers
 
@@ -69,8 +70,8 @@ schema. The name of the foreign-key field depends on the export format:
 | Context | Stop identifier | Platform identifier | Parent-stop reference |
 | --- | --- | --- | --- |
 | Curated CSV | `id` | `id` | `platform_parent_stop_id` |
-| Full CSV | Model's `id` | Model's `id` | Typically `stop_id` (the mapped model column) |
-| SQLite | `stops.id` | `platforms.id` | `platforms.stop_id` |
+| GeoJSON | `id` | `id` | `platform_parent_stop_id` |
+| SQLite | `stops.id` | `platforms.id` | `platforms.platform_parent_stop_id` |
 | GTFS `stops.txt` | `stop_id` | `stop_id` | `parent_station`, where applicable |
 
 > [!NOTE]
@@ -79,9 +80,8 @@ schema. The name of the foreign-key field depends on the export format:
 > and is not a replacement for `platform_parent_stop_id` in the CSV schema.
 
 The three curated CSV files are different **views of the same records**, not
-three independent datasets. The same applies to the three full CSV variants.
-Do not concatenate all six CSVs and treat the result as six distinct sets of
-stops or platforms.
+three independent datasets. Do not concatenate them and treat the result as
+three distinct sets of stops or platforms.
 
 ## Curated CSV: fixed, record-specific schemas
 
@@ -108,7 +108,7 @@ id,iscp_id,name,type,lat,lon,country,region,district,municipality,modes,amenitie
 | Column | Data / representation | Description | Stops | Platforms |
 | --- | --- | --- | --- | --- |
 | `id` | Identifier (text) | Unique identifier of this stop or platform record. Use this for joins inside the dataset. | Stop ID | Platform ID |
-| `iscp_id` | Source identifier (text, optional) | ISCP identifier associated with the record, if one is available. It is distinct from `id`. | Where known | Where known |
+| `iscp_id` | Source identifier (text, optional) | ISCP identifier of the matched registry record. It is distinct from `id`. Matches belong to stops, so platform rows leave this empty (read the parent stop's value instead). | Where matched | Empty |
 | `name` | Text | Display name of the stop or platform. | Yes | Yes |
 | `type` | Text | Record classification. Stop rows use the stop model's kind; platform rows use `platform`. | Stop kind | `platform` |
 | `lat` | Decimal degrees, optional | Latitude of the record's geographic position. | Stop position | Platform position |
@@ -156,104 +156,47 @@ with open("data/export/platforms.csv", encoding="utf-8", newline="") as f:
         print(platform["name"], "→", stop["name"] if stop else "unknown stop")
 ```
 
-## Full CSV: dynamically derived model columns
+## ISCP register: `iscp-register.zip`
 
-**Files:** `stops.full.csv`, `platforms.full.csv`,
-`stops-and-platforms.full.csv`
+The ISCP registry is a source dataset in its own right. It is loaded by
+the ISCP crawler into dedicated database tables (`iscp_stops`,
+`iscp_platforms`) and published unchanged -- as a normalized register,
+not mixed with the processed OSM-based dataset -- in one ZIP asset:
 
-Unlike the curated exports, **the full CSV headers are not hardcoded**. They
-are obtained at export time from the mapped SQLAlchemy attributes of the
-`Stop` and `Platform` models. This means a newly mapped database column will
-appear in the appropriate file without modifying the full CSV exporter.
-
-### Exact header construction
-
-| File | Rows | Header columns, in order |
-| --- | --- | --- |
-| `stops.full.csv` | Stops | `inspect(Stop).column_attrs.keys()` |
-| `platforms.full.csv` | Platforms | `inspect(Platform).column_attrs.keys()` |
-| `stops-and-platforms.full.csv` | Stops and platforms | `record_type`, followed by **all stop columns**, then **platform columns not already present**, preserving their model order |
-
-The combined file adds one column not necessarily present in either model:
-
-| Column | Possible values | Meaning |
-| --- | --- | --- |
-| `record_type` | `stop`, `platform` | Identifies which model the row comes from. This is **not** the same as the curated CSV's `type` field or the stop model's `kind`. |
-
-### Important model fields
-
-These are examples of mapped fields used by the export implementation and
-tests; **they are not a complete or permanently fixed full-CSV header**.
-The authoritative column list is the currently installed model schema.
-
-| Column | Model / where applicable | Meaning |
-| --- | --- | --- |
-| `id` | Both models | Record identifier. In the combined file it identifies the row's stop **or** platform. |
-| `name` | Both models | Record name. |
-| `source` | Where mapped | Source system associated with the record. |
-| `original_id` | Where mapped | Identifier from the source system; not necessarily the same as `iscp_id`. |
-| `kind` | Stop model, where mapped | Stop/station classification in the database model. |
-| `stop_id` | Platform model, where mapped | Foreign key referencing the parent stop. This is the database-oriented counterpart of the curated `platform_parent_stop_id`. |
-| `platform_code` | Platform model, where mapped | Platform number/code. |
-| `lat`, `lon` | Where mapped | Geographic coordinates. |
-| `modes`, `amenities` | Where mapped | Model-level multi-value attributes. |
-
-For example, a field added later to `Platform` automatically becomes a column
-in both `platforms.full.csv` and `stops-and-platforms.full.csv`. It does **not**
-become a column in `stops.full.csv` unless the `Stop` model also maps it.
-
-When a merged column is not defined for the row's model (for example, a
-platform-only attribute on a stop row), the corresponding CSV cell is empty.
-The combined export does **not** prefix overlapping model field names; if both
-models define `name`, that is one shared CSV column.
-
-### Value serialization
-
-| Python / model value | Written to full CSV |
+| File inside the ZIP | Contents |
 | --- | --- |
-| `None` / SQL `NULL` | Empty cell |
-| `Enum` | Its `.value` |
-| Date, time, datetime | ISO 8601-style string via `.isoformat()` |
-| `UUID`, `Decimal` | Text representation |
-| Lists, tuples, dictionaries, sets | JSON text in **one** CSV cell (sets are sorted for consistency) |
-| Bytes | Hexadecimal text |
-| Other scalar values | Written by Python's standard CSV writer |
+| `iscp-stops.csv` | One row per registry stop, including cancelled records |
+| `iscp-platforms.csv` | One row per GPS coordinate pair of a registry stop |
+| `iscp-stops.geojson` | One feature per coordinate pair (stops without GPS get a feature with `null` geometry) |
+| `iscp.sqlite` | The two registry tables plus a `metadata` table; the `iscp_stops` table also carries the parsed source fields as JSON in `raw_fields` |
 
-Because SQL `NULL` and an actual empty string both appear as empty CSV cells,
-the full CSV files are **not guaranteed to be losslessly round-trippable** into
-the original database. They also do not export SQLAlchemy relationship objects
-or contents of unrelated auxiliary tables. Use `stops.sqlite` for those cases.
+**`iscp-stops.csv` columns:**
 
-### Inspect the current, exact headers
-
-The full CSV schema is version-dependent. After running the build, the **first
-line of each CSV file is the exact header for that build**:
-
-```bash
-head -n 1 data/export/stops.full.csv
-head -n 1 data/export/platforms.full.csv
-head -n 1 data/export/stops-and-platforms.full.csv
+```csv
+iscp_id,municipality,local_part,locality,name_ids,name_mhd,display_name,district,country,transport_system,validity,is_cancelled,source_file
 ```
 
-Alternatively, inspect the models without building exports:
+- The source name fields are kept separate (`name_ids`, `name_mhd`,
+  `local_part`, `locality`); `display_name` is the derived registry name
+  (`name_ids`, else `name_mhd`, else municipality + locality/local part).
+- `is_cancelled` is `1` for cancelled registry records, else `0`.
+  Cancelled records are part of the register export; they are only
+  excluded from *matching* against canonical stops.
+- `source_file` is the registry file (per municipality) the record was
+  parsed from.
 
-```python
-from sqlalchemy import inspect
-from models import Stop, Platform
+**`iscp-platforms.csv` columns:**
 
-stop_columns = list(inspect(Stop).column_attrs.keys())
-platform_columns = list(inspect(Platform).column_attrs.keys())
-combined_columns = ["record_type", *dict.fromkeys([*stop_columns, *platform_columns])]
-
-print("stops.full.csv:", stop_columns)
-print("platforms.full.csv:", platform_columns)
-print("stops-and-platforms.full.csv:", combined_columns)
+```csv
+iscp_id,position,lat,lon
 ```
 
-> [!TIP]
-> For integrations that need a **predictable fixed set of columns**, use the
-> curated CSVs. For integrations that must not miss new database attributes,
-> use the full CSVs but read fields **by name**, not by numeric position.
+The registry does not name or number its platforms; `position` is the
+order of the GPS coordinate pair in the source record.
+
+The same two tables are also included in `stops.sqlite`, together with
+the `iscp_matches` link table, so the register can be joined with the
+canonical stops in one database.
 
 ## GTFS: `stops.gtfs.zip`
 
@@ -339,27 +282,26 @@ GeoJSON.
 
 ## SQLite: `stops.sqlite`
 
-`data/export/stops.sqlite` is a **consistent snapshot** of the working SQLite
-database at `data/stops.sqlite`. It is created using SQLite's Backup API after
-the pipeline has committed its changes.
+`data/export/stops.sqlite` is a **dedicated export database**: it is built
+from scratch with the explicit schema below. It is *not* a backup of the
+working database at `data/stops.sqlite` -- the working database's layout
+is an implementation detail (its platform foreign key is called
+`stop_id`; the export calls it `platform_parent_stop_id`, like every
+other public export).
 
-Unlike the CSV views, it includes the **entire database**: stop and platform
-tables, any other tables present in the source database, their rows, database
-indexes, and schema objects. It preserves the relational representation of
-foreign keys and is the preferred format for complete local querying.
+### Tables and views
 
-### Main relational tables
-
-| Table | Purpose | Key fields / relationships |
+| Table / view | Purpose | Key fields / relationships |
 | --- | --- | --- |
-| `stops` | Stop/station records | `id` (primary key); other columns depend on the mapped schema. |
-| `platforms` | Platform records | `id` (primary key), `stop_id` (reference to `stops.id`); other columns depend on the mapped schema. |
-| Additional tables | Auxiliary, association or metadata data where present | Included automatically in the database snapshot; inspect the schema for their actual names. |
+| `stops` | Stop/station records | `id` (primary key), `iscp_id`, `name`, `type` (`stop`/`station`), coordinates, administrative location, `modes`/`amenities` (JSON arrays), provenance (`original_name`, `source`, `source_id`) |
+| `platforms` | Platform records | `id` (primary key), `platform_parent_stop_id` (reference to `stops.id`), `platform_code`, coordinates, provenance |
+| `iscp_stops`, `iscp_platforms` | The ISCP registry | Same schema as the standalone register export (see above) |
+| `iscp_matches` | Links between canonical stops and registry records | `stop_id` (primary key), `iscp_id`, `quality` (`exact`/`high`/`medium`), `distance_m` |
+| `metadata` | Export metadata | `schema_version`, `dataset`, `generated_at` |
+| `stops_and_platforms` (view) | Stops and platforms as one table | Same columns as `stops-and-platforms.csv` |
 
-The exact list of tables and columns depends on the version of the models
-used to build the dataset. The SQLite snapshot copies what **actually exists
-in the working database**, rather than building only the two tables listed
-above.
+Platforms do not carry their own `iscp_id`: a match belongs to the stop.
+Join a platform to `stops` (via `platform_parent_stop_id`) to read it.
 
 ### Useful SQL queries
 
@@ -379,7 +321,7 @@ PRAGMA foreign_key_list('platforms');
 SELECT p.id AS platform_id, p.name AS platform_name,
        s.id AS stop_id, s.name AS stop_name
 FROM platforms AS p
-LEFT JOIN stops AS s ON p.stop_id = s.id
+LEFT JOIN stops AS s ON p.platform_parent_stop_id = s.id
 LIMIT 20;
 ```
 
@@ -390,9 +332,9 @@ sqlite3 data/export/stops.sqlite
 ```
 
 **`data/stops.sqlite` vs `data/export/stops.sqlite`:** the former is the
-working database produced by the pipeline; the latter is the exported snapshot
-intended for distribution. If you want to download the full dataset, choose
-the file inside `data/export/`.
+working database produced by the pipeline (internal layout); the latter
+is the export database intended for distribution. If you want to download
+the dataset, choose the file inside `data/export/`.
 
 ## Generation and publication
 
@@ -402,15 +344,15 @@ flowchart TD
     B --> C[(data/stops.sqlite)]
     C --> D[Exporters]
     D --> E[Curated CSV: 3 files]
-    D --> F[Full CSV: 3 files]
     D --> G[GeoJSON]
     D --> H[GTFS stops ZIP]
-    D --> I[SQLite snapshot]
+    D --> I[SQLite export]
+    D --> K[ISCP register ZIP]
     E --> J[data/export/]
-    F --> J
     G --> J
     H --> J
     I --> J
+    K --> J
 ```
 
 1. Run `python build.py` to rebuild the working dataset and generate the export
@@ -427,8 +369,9 @@ flowchart TD
 - CSV and GTFS `stops.txt` use **UTF-8**, comma-separated fields and a header
   row. Values containing commas or quotes are escaped by Python's CSV writer.
 - Curated CSVs use fixed, documented schemas: **12 columns** in `stops.csv`
-  and **14 columns** in `platforms.csv` and `stops-and-platforms.csv`. Full CSVs
-  deliberately evolve with the SQLAlchemy models; consumers should inspect their headers.
+  and **14 columns** in `platforms.csv` and `stops-and-platforms.csv`. The
+  SQLite export schema is versioned in its `metadata` table
+  (`schema_version`).
 - A blank value can mean **unknown**, **not provided** or **not applicable**, as
   described above. It should not automatically be interpreted as a negative.
 - The build generates fresh outputs rather than a history of previous
@@ -442,12 +385,12 @@ flowchart TD
 | Previous name / meaning | Current name / meaning |
 | --- | --- |
 | `stops.csv` containing both stops and platforms | `stops-and-platforms.csv` |
-| `stops.full.csv` containing both record types | `stops-and-platforms.full.csv` |
-| — | `stops.csv` now contains **stops only**, without platform-only fields |
-| — | `stops.full.csv` now contains **stops only** |
 | `parent_stop_id` in curated CSV | `platform_parent_stop_id` |
+| `platforms.stop_id` in the SQLite export | `platforms.platform_parent_stop_id` |
+| `parent_stop_id` in GeoJSON | `platform_parent_stop_id` |
+| `stops.full.csv`, `platforms.full.csv`, `stops-and-platforms.full.csv` | **removed** -- the full model dumps were not a stable public schema; provenance columns live in the SQLite export |
 
-In the current layout, `stops.*` means **stops only** for the two CSV families;
-`stops-and-platforms.*` means **both record types**. The names
+In the current layout, `stops.csv` means **stops only**;
+`stops-and-platforms.csv` means **both record types**. The names
 `stops.geojson`, `stops.gtfs.zip` and `stops.sqlite` are established format
 names and do not imply the same row filter as `stops.csv`.

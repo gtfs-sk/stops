@@ -5,14 +5,22 @@ from collections.abc import Iterator, Sequence
 
 from sqlalchemy.orm import Session
 
-from models import Platform, Stop
+from models import Base
 
 
 class BaseCrawler(ABC):
+    """A source collector.
+
+    Crawlers yield mapped database records of any model: the OSM crawler
+    yields canonical Stop/Platform records, while reference-source
+    crawlers (such as ISCP) yield their own first-class source records.
+    Matching and cleaning never happen here.
+    """
+
     name: str
 
     @abstractmethod
-    def fetch(self) -> Iterator[Stop | Platform]:
+    def fetch(self) -> Iterator[Base]:
         pass
 
 

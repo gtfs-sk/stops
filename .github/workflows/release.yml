@@ -62,7 +62,8 @@ jobs:
 
       - name: Validate exports (no release if this fails)
         run: |
-          python scripts/validate_exports.py data/export --min-stops 1000 \
+          python scripts/validate_exports.py data/export \
+            --min-stops 1000 --min-iscp 1000 \
             | tee release-stats.txt
           cat release-stats.txt >> "$GITHUB_STEP_SUMMARY"
 
@@ -97,6 +98,7 @@ jobs:
           STOPS=$(grep '^stops:' release-stats.txt | cut -d' ' -f2)
           PLATFORMS=$(grep '^platforms:' release-stats.txt | cut -d' ' -f2)
           ISCP=$(grep '^iscp_coverage_pct:' release-stats.txt | cut -d' ' -f2)
+          ISCP_STOPS=$(grep '^iscp_stops:' release-stats.txt | cut -d' ' -f2)
           {
             echo "Snapshot of Slovakia's public-transport stops as of $TAG (CalVer)."
             echo
@@ -105,10 +107,12 @@ jobs:
             echo "| Stops | $STOPS |"
             echo "| Platforms | $PLATFORMS |"
             echo "| Stops with an ISCP id | $ISCP % |"
+            echo "| ISCP registry records | $ISCP_STOPS |"
             echo "| Built from | [\`${GITHUB_SHA:0:7}\`](https://github.com/${{ github.repository }}/commit/$GITHUB_SHA) |"
             echo
-            echo "Assets: the nine export files described in"
-            echo "[docs/exports.md](https://github.com/${{ github.repository }}/blob/main/docs/exports.md),"
+            echo "Assets: the export files described in"
+            echo "[docs/exports.md](https://github.com/${{ github.repository }}/blob/main/docs/exports.md)"
+            echo "(including the standalone \`iscp-register.zip\`),"
             echo "a combined \`stops-$TAG.zip\` bundle and \`SHA256SUMS\`."
             echo
             echo "Data: ODbL 1.0 (see LICENSE). Sources: © OpenStreetMap"

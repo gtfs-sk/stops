@@ -24,11 +24,10 @@ from typing import final, override
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from models import Stop
+from models import IscpStop, Stop
 from models.transport_mode import TransportMode
 from pipeline.patch import BasePatcher
-from pipeline.patch.iscp import load_registry
-from pipeline.patch.iscp.text import normalize
+from pipeline.text import normalize
 
 logger = logging.getLogger(__name__)
 
@@ -189,15 +188,13 @@ def canonical_name(
     return f"{municipality}, {rest}"
 
 
-def load_official_names() -> dict[str, str]:
-    try:
-        records, _ = load_registry()
-    except Exception as exc:
-        logger.warning("ISCP registry unavailable, heuristics only: %s", exc)
-        return {}
-    return {
-        r.cislo: r.display_name for r in records if not r.cancelled and r.display_name
-    }
+def load_official_names(session: Session) -> dict[str, str]:
+    """Official registry names from the ISCP tables loaded by the crawler."""
+
+    records = session.scalars(
+        select(IscpStop).where(IscpStop.is_cancelled.is_(False))
+    ).all()
+    return {r.iscp_id: r.display_name for r in records if r.display_name}
 
 
 @final
@@ -206,7 +203,7 @@ class StopNamePatcher(BasePatcher):
 
     @override
     def patch(self, session: Session) -> None:
-        official = load_official_names()
+        official = load_official_names(session)
         if official:
             logger.info("Official ISCP names available for %d stops", len(official))
         else:

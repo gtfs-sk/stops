@@ -12,6 +12,7 @@ from pipeline.clean import run_cleaners
 from pipeline.clean.cluster import StopClusterCleaner
 from pipeline.clean.platforms import PlatformDeduplicationCleaner
 from pipeline.crawl import run_crawlers
+from pipeline.crawl.iscp import IscpCrawler
 from pipeline.crawl.osm import OsmCrawler
 from pipeline.export import run_exporters
 from pipeline.export.commasv.curated import (
@@ -19,13 +20,9 @@ from pipeline.export.commasv.curated import (
     PlatformsCsvExporter,
     StopsCsvExporter,
 )
-from pipeline.export.commasv.full import (
-    FullCombinedCsvExporter,
-    FullPlatformsCsvExporter,
-    FullStopsCsvExporter,
-)
 from pipeline.export.geojson import GeoJsonExporter
 from pipeline.export.gtfs import GtfsStopsExporter
+from pipeline.export.iscp import IscpRegisterExporter
 from pipeline.export.sqlite import SqliteExporter
 from pipeline.patch import run_patchers
 from pipeline.patch.iscp import IscpIdPatcher
@@ -35,7 +32,7 @@ DATA_DIR = Path("data")
 DB_PATH = DATA_DIR / "stops.sqlite"
 OUTPUT_DIR = DATA_DIR / "export"
 
-CRAWLERS = [OsmCrawler]
+CRAWLERS = [OsmCrawler, IscpCrawler]
 CLEANERS = [StopClusterCleaner, PlatformDeduplicationCleaner]
 PATCHERS = [IscpIdPatcher, StopNamePatcher]
 EXPORTERS = [
@@ -44,10 +41,8 @@ EXPORTERS = [
     StopsCsvExporter,
     PlatformsCsvExporter,
     CombinedCsvExporter,
-    FullStopsCsvExporter,
-    FullPlatformsCsvExporter,
-    FullCombinedCsvExporter,
     SqliteExporter,
+    IscpRegisterExporter,
 ]
 
 logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO").upper())

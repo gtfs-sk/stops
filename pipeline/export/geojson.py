@@ -39,7 +39,7 @@ class GeoJsonExporter(BaseExporter):
                         "platform_code": item.platform_code
                         if isinstance(item, Platform)
                         else None,
-                        "parent_stop_id": item.stop_id
+                        "platform_parent_stop_id": item.stop_id
                         if isinstance(item, Platform)
                         else None,
                     },
